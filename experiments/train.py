@@ -259,8 +259,8 @@ class ModelFactory:
         return KBEncoder(
             encoder_name=encoder_spec,
             projector_type=projector_type,
-            endpoint_url="https://yunwu.ai/v1",
-            endpoint_api_key="sk-7IQRBZIKqwifDeQEJIyG7twNFcR4MIzXzbqTbd26sUD4azDt",
+            endpoint_url="your_endpoint_url",
+            endpoint_api_key="your_endpoint_api_key",
             out_dim=model_config.hidden_size * (model_config.num_hidden_layers // kb_token_layer_frequency + 1),
             frozen_base_model=True,
             projector_kwargs={"mlp_depth": 1, "mlp_hidden_dim": model_config.hidden_size},
@@ -511,6 +511,7 @@ class ModelTrainer:
         config: TrainingConfig,
         device: torch.device,
         output_dir: str,
+        llm_savename: str,
     ):
         self.accelerator = Accelerator(device_placement=False)
         self.logger = logging.getLogger("training")
@@ -520,6 +521,7 @@ class ModelTrainer:
         self.config = config
         self.device = device
         self.output_dir = pathlib.Path(output_dir)
+        self.llm_savename = llm_savename
         
         # Setup model-specific functions
         if isinstance(model, KBLaMPhi3ForCausalLM):
@@ -792,10 +794,10 @@ class ModelTrainer:
 
             if self.accelerator.is_main_process:
                 self.logger.info("Saving checkpoint...")
-                model_ckpt_name = self.output_dir / f"{self.config.train_dataset}_step_{step}"
+                model_ckpt_name = self.output_dir / f"{self.llm_savename}_step_{step}"
                 model_ckpt_name.mkdir(parents=True, exist_ok=True)
 
-                encoder_dir = self.output_dir / f"{self.config.train_dataset}_step_{step}_encoder"
+                encoder_dir = self.output_dir / f"{self.llm_savename}_step_{step}_encoder"
                 encoder_dir.mkdir(parents=True, exist_ok=True)
 
                 unwrapped_model = self.accelerator.unwrap_model(self.model)
@@ -815,6 +817,59 @@ class ModelTrainer:
         except Exception as e:
             self.logger.error(f"Error saving checkpoint: {e}")
             raise e
+
+
+def get_prefix_str(args: argparse.Namespace) -> str:
+    """Generate prefix string for model checkpoint naming."""
+    use_data_aug = args.use_data_aug
+    sep_query_head = args.sep_query_head
+    kb_size = args.kb_size
+    dynamic_kb_size = args.dynamic_kb_size
+    use_certainty_loss = args.use_certainty_loss
+    projector_type = args.projector_type
+    
+    if dynamic_kb_size is not None:
+        kb_size = "dynamic"  # Random size
+
+    duplicate_true_kb = args.duplicate_true_kb
+    length_invariance = args.length_invariance
+    outlier_ratio = args.outlier_num
+    use_outlier = outlier_ratio != -1
+    multi_entities = args.multi_entities
+    use_extended_qa = args.use_extended_qa
+    kb_token_layer_frequency = args.kb_token_layer_frequency
+    lr = args.lr
+    use_kg = args.use_kg
+
+    if use_kg:
+        prefix_string = f"AtlasKV_stage1_lr_{lr}"
+    else:
+        prefix_string = f"KBLaM_stage1_lr_{lr}"
+    if kb_token_layer_frequency is not None:
+        prefix_string += f"KBTokenLayerFreq{kb_token_layer_frequency}"
+    if use_extended_qa:
+        prefix_string += "UseExtendedQA"
+    if multi_entities is not None:
+        prefix_string += f"MultiEntities{multi_entities}"
+    if use_outlier:
+        prefix_string += f"UseOutlier{outlier_ratio}"
+    if length_invariance:
+        prefix_string += "LengthInvariant"
+    if not duplicate_true_kb:
+        prefix_string += "NoDuplicate"
+    if kb_size is not None:
+        prefix_string += f"KBSize{kb_size}"
+    if sep_query_head:
+        prefix_string += "SepQueryHead"
+    if use_data_aug:
+        prefix_string += "UseDataAug"
+    if use_certainty_loss:
+        prefix_string += "UseCertaintyLoss"
+    if projector_type == "mlp":
+        prefix_string += "MLPProjector"
+    elif projector_type == "linear":
+        prefix_string += "LinearProjector"
+    return prefix_string
 
 
 def create_config_from_args(args: argparse.Namespace) -> TrainingConfig:
@@ -1032,8 +1087,14 @@ def main():
 
     logger.info("Model ready 🚀")
 
+    # Generate model checkpoint name
+    prefix_string = get_prefix_str(args)
+    llm_ckpt_name = f"{prefix_string}KeyFrom{args.key_embd_src}_{args.encoder_spec}_{args.train_dataset}_{args.llm_type}"
+    logger.info(f"Experiment prefix: {prefix_string}")
+    logger.info(f"Model checkpoint name: {llm_ckpt_name}")
+
     # Start training
-    trainer = ModelTrainer(model, retriever, tokenizer, config, device, args.model_save_dir)
+    trainer = ModelTrainer(model, retriever, tokenizer, config, device, args.model_save_dir, llm_ckpt_name)
     
     def _get_parameter_count(encoder):
         return sum(p.numel() for p in encoder.parameters() if p.requires_grad)
