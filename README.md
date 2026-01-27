@@ -18,6 +18,10 @@ generalization abilities.
 
 </div>
 
+## 📰 News
+
+- 🎉 AtlasKV has been accepted to **ICLR 2026**!
+
 ## 📋 Table of Contents
 
 <details>
