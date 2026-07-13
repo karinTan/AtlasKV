@@ -20,6 +20,7 @@ class DataPoint:
     name: str
     description_type: str
     description: str
+    reason: str = None
     Q: str = None
     A: str = None
     key_string: str = None
