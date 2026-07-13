@@ -1,0 +1,156 @@
+[
+  {
+    "name": "ContactsAddContact_open_contacts",
+    "description_type": "next AndroidWorld action",
+    "reason": "The Contacts app is not open yet, so I should launch it before creating the contact.",
+    "description": "Reason: The Contacts app is not open yet, so I should launch it before creating the contact.\nAction: {\"action_type\": \"open_app\", \"app_name\": \"Contacts\"}",
+    "Q": "What is the next AndroidWorld action for creating a new contact from the Android home screen?",
+    "A": "Reason: The Contacts app is not open yet, so I should launch it before creating the contact.\nAction: {\"action_type\": \"open_app\", \"app_name\": \"Contacts\"}",
+    "key_string": "The next AndroidWorld action for creating a new contact from the Android home screen",
+    "extended_Q": "",
+    "extended_A": ""
+  },
+  {
+    "name": "ContactsCreateContact_click_create",
+    "description_type": "next AndroidWorld action",
+    "reason": "The visible Create contact control is the next step for opening the new-contact form.",
+    "description": "Reason: The visible Create contact control is the next step for opening the new-contact form.\nAction: {\"action_type\": \"click\", \"index\": 2}",
+    "Q": "What is the next AndroidWorld action when the Contacts screen shows a clickable Create contact UI element at index 2?",
+    "A": "Reason: The visible Create contact control is the next step for opening the new-contact form.\nAction: {\"action_type\": \"click\", \"index\": 2}",
+    "key_string": "The next AndroidWorld action for opening the new contact screen from Contacts",
+    "extended_Q": "",
+    "extended_A": ""
+  },
+  {
+    "name": "SimpleSmsReply_click_thread",
+    "description_type": "next AndroidWorld action",
+    "reason": "The matching conversation is visible, so I should open it before composing the reply.",
+    "description": "Reason: The matching conversation is visible, so I should open it before composing the reply.\nAction: {\"action_type\": \"click\", \"index\": 1}",
+    "Q": "What is the next AndroidWorld action when replying to a phone number and the matching conversation is visible at index 1?",
+    "A": "Reason: The matching conversation is visible, so I should open it before composing the reply.\nAction: {\"action_type\": \"click\", \"index\": 1}",
+    "key_string": "The next AndroidWorld action for opening the matching SMS conversation",
+    "extended_Q": "",
+    "extended_A": ""
+  },
+  {
+    "name": "SimpleSmsInputMessage",
+    "description_type": "next AndroidWorld action",
+    "reason": "The message field is editable and the requested reply is known, so I should enter it there.",
+    "description": "Reason: The message field is editable and the requested reply is known, so I should enter it there.\nAction: {\"action_type\": \"input_text\", \"index\": 0, \"text\": \"See you at 7\"}",
+    "Q": "What is the next AndroidWorld action when the SMS message text field is editable and the user needs to type See you at 7?",
+    "A": "Reason: The message field is editable and the requested reply is known, so I should enter it there.\nAction: {\"action_type\": \"input_text\", \"index\": 0, \"text\": \"See you at 7\"}",
+    "key_string": "The next AndroidWorld action for typing an SMS message into an editable text field",
+    "extended_Q": "",
+    "extended_A": ""
+  },
+  {
+    "name": "ClockOpenTimer",
+    "description_type": "next AndroidWorld action",
+    "reason": "The Timer control is visible, so I should select it to open timer entry.",
+    "description": "Reason: The Timer control is visible, so I should select it to open timer entry.\nAction: {\"action_type\": \"click\", \"index\": 2}",
+    "Q": "What is the next AndroidWorld action when setting a timer and the Timer tab or timer entry control is visible at index 2?",
+    "A": "Reason: The Timer control is visible, so I should select it to open timer entry.\nAction: {\"action_type\": \"click\", \"index\": 2}",
+    "key_string": "The next AndroidWorld action for opening timer entry in Clock",
+    "extended_Q": "",
+    "extended_A": ""
+  },
+  {
+    "name": "TaskAlreadyDone",
+    "description_type": "next AndroidWorld action",
+    "reason": "The observed state confirms that the requested task is already complete.",
+    "description": "Reason: The observed state confirms that the requested task is already complete.\nAction: {\"action_type\": \"status\", \"goal_status\": \"complete\"}",
+    "Q": "What is the next AndroidWorld action when the requested AndroidWorld task has already been completed?",
+    "A": "Reason: The observed state confirms that the requested task is already complete.\nAction: {\"action_type\": \"status\", \"goal_status\": \"complete\"}",
+    "key_string": "The next AndroidWorld action when the task is already complete",
+    "extended_Q": "",
+    "extended_A": ""
+  },
+  {
+    "name": "ChromeInputUrl",
+    "description_type": "next AndroidWorld action",
+    "reason": "The address bar is editable and the destination URL is known, so I should enter it there.",
+    "description": "Reason: The address bar is editable and the destination URL is known, so I should enter it there.\nAction: {\"action_type\": \"input_text\", \"index\": 1, \"text\": \"https://example.com\"}",
+    "Q": "What is the next AndroidWorld action when Chrome is open, the address bar is editable at index 1, and the user needs to go to https://example.com?",
+    "A": "Reason: The address bar is editable and the destination URL is known, so I should enter it there.\nAction: {\"action_type\": \"input_text\", \"index\": 1, \"text\": \"https://example.com\"}",
+    "key_string": "The next AndroidWorld action for entering a URL into Chrome",
+    "extended_Q": "",
+    "extended_A": ""
+  },
+  {
+    "name": "CalendarOpenApp",
+    "description_type": "next AndroidWorld action",
+    "reason": "No calendar information is visible yet, so I should open Calendar to inspect the schedule.",
+    "description": "Reason: No calendar information is visible yet, so I should open Calendar to inspect the schedule.\nAction: {\"action_type\": \"open_app\", \"app_name\": \"Calendar\"}",
+    "Q": "What is the next AndroidWorld action when the user asks about today's schedule and no calendar information is visible yet?",
+    "A": "Reason: No calendar information is visible yet, so I should open Calendar to inspect the schedule.\nAction: {\"action_type\": \"open_app\", \"app_name\": \"Calendar\"}",
+    "key_string": "The next AndroidWorld action for checking a schedule in Calendar",
+    "extended_Q": "",
+    "extended_A": ""
+  },
+  {
+    "name": "SettingsWifiAlreadyOn",
+    "description_type": "next AndroidWorld action",
+    "reason": "Wi-Fi is already shown as enabled, so the requested state has been achieved.",
+    "description": "Reason: Wi-Fi is already shown as enabled, so the requested state has been achieved.\nAction: {\"action_type\": \"status\", \"goal_status\": \"complete\"}",
+    "Q": "What is the next AndroidWorld action when the user wants Wi-Fi enabled and the current screen already shows Wi-Fi is on?",
+    "A": "Reason: Wi-Fi is already shown as enabled, so the requested state has been achieved.\nAction: {\"action_type\": \"status\", \"goal_status\": \"complete\"}",
+    "key_string": "The next AndroidWorld action when a requested setting is already enabled",
+    "extended_Q": "",
+    "extended_A": ""
+  },
+  {
+    "name": "ScrollableListNeedMoreItems",
+    "description_type": "next AndroidWorld action",
+    "reason": "The needed item is not visible and more content is available below, so I should scroll down.",
+    "description": "Reason: The needed item is not visible and more content is available below, so I should scroll down.\nAction: {\"action_type\": \"scroll\", \"direction\": \"down\"}",
+    "Q": "What is the next AndroidWorld action when the needed item is not visible and the current screen is a scrollable vertical list?",
+    "A": "Reason: The needed item is not visible and more content is available below, so I should scroll down.\nAction: {\"action_type\": \"scroll\", \"direction\": \"down\"}",
+    "key_string": "The next AndroidWorld action for revealing more items in a vertical list",
+    "extended_Q": "",
+    "extended_A": ""
+  },
+  {
+    "name": "BackToPreviousScreen",
+    "description_type": "next AndroidWorld action",
+    "reason": "The current detail page is not useful and the needed list is on the previous screen.",
+    "description": "Reason: The current detail page is not useful and the needed list is on the previous screen.\nAction: {\"action_type\": \"navigate_back\"}",
+    "Q": "What is the next AndroidWorld action when the current screen is the wrong detail page and the previous screen contains the needed list?",
+    "A": "Reason: The current detail page is not useful and the needed list is on the previous screen.\nAction: {\"action_type\": \"navigate_back\"}",
+    "key_string": "The next AndroidWorld action for returning to the previous screen",
+    "extended_Q": "",
+    "extended_A": ""
+  },
+  {
+    "name": "QuestionAnswerVisibleText",
+    "description_type": "next AndroidWorld action",
+    "reason": "The requested meeting time is visible on the screen, so I can answer the user directly.",
+    "description": "Reason: The requested meeting time is visible on the screen, so I can answer the user directly.\nAction: {\"action_type\": \"answer\", \"text\": \"The meeting is at 3 PM.\"}",
+    "Q": "What is the next AndroidWorld action when the user asked a question and the visible screen contains the answer The meeting is at 3 PM?",
+    "A": "Reason: The requested meeting time is visible on the screen, so I can answer the user directly.\nAction: {\"action_type\": \"answer\", \"text\": \"The meeting is at 3 PM.\"}",
+    "key_string": "The next AndroidWorld action for answering a user question from visible screen text",
+    "extended_Q": "",
+    "extended_A": ""
+  },
+  {
+    "name": "MissingRequiredApp",
+    "description_type": "next AndroidWorld action",
+    "reason": "The required app is not installed and no alternative path can complete the task.",
+    "description": "Reason: The required app is not installed and no alternative path can complete the task.\nAction: {\"action_type\": \"status\", \"goal_status\": \"infeasible\"}",
+    "Q": "What is the next AndroidWorld action when the user asks to use an app that is not installed and there is no other way to complete the task?",
+    "A": "Reason: The required app is not installed and no alternative path can complete the task.\nAction: {\"action_type\": \"status\", \"goal_status\": \"infeasible\"}",
+    "key_string": "The next AndroidWorld action when a task cannot be completed because the required app is missing",
+    "extended_Q": "",
+    "extended_A": ""
+  },
+  {
+    "name": "TapVisibleConfirmation",
+    "description_type": "next AndroidWorld action",
+    "reason": "The visible OK button is the control that confirms the requested operation.",
+    "description": "Reason: The visible OK button is the control that confirms the requested operation.\nAction: {\"action_type\": \"click\", \"index\": 4}",
+    "Q": "What is the next AndroidWorld action when the user needs to confirm an operation and a visible OK button is clickable at index 4?",
+    "A": "Reason: The visible OK button is the control that confirms the requested operation.\nAction: {\"action_type\": \"click\", \"index\": 4}",
+    "key_string": "The next AndroidWorld action for tapping a visible confirmation button",
+    "extended_Q": "",
+    "extended_A": ""
+  }
+]
