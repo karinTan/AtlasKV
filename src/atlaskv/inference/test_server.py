@@ -32,6 +32,11 @@ from atlaskv.android_world import (
     openai_error_response,
     process_t3a_output,
 )
+from atlaskv.android_world.prompt_strategy import (
+    DEFAULT_ACTION_MAX_TOKENS,
+    PromptStrategy,
+    rewrite_chat_completion_payload,
+)
 from atlaskv.kb_encoder import KBEncoder
 from atlaskv.models.kblam_config import AtlasKVConfig, KBLaMConfig
 from atlaskv.models.llama3_model import AtlaskvLlamaForCausalLM, KblamLlamaForCausalLM, set_llama_attention_classes
@@ -107,6 +112,8 @@ class AdapterConfig:
     clean_single_action: bool
     include_image_placeholders: bool
     inject_kv: bool
+    prompt_strategy: PromptStrategy
+    action_max_tokens: int
 
 
 def load_dataset_rows(dataset_path: str) -> List[Dict[str, Any]]:
@@ -441,6 +448,14 @@ def messages_to_prompt(messages: List[ChatMessage], include_image_placeholders: 
     return "\n\n".join(blocks).strip()
 
 
+def _request_to_payload(request: ChatCompletionRequest) -> Dict[str, Any]:
+    return request.dict(by_alias=True)
+
+
+def _payload_to_request(payload: Dict[str, Any]) -> ChatCompletionRequest:
+    return ChatCompletionRequest(**payload)
+
+
 def keep_first_action_block(text: str) -> str:
     """Trim output to the first complete MobileWorld-style Action JSON block."""
     action_match = re.search(r"Action\s*:\s*", text)
@@ -475,7 +490,7 @@ def keep_first_action_block(text: str) -> str:
     return text.strip()
 
 
-def _completion_response(model: str, content: str, usage: Dict[str, int]) -> Dict[str, Any]:
+def _completion_response(model: str, content: str, usage: Dict[str, int], **metadata: Any) -> Dict[str, Any]:
     return openai_chat_completion_body(
         model,
         content,
@@ -484,6 +499,28 @@ def _completion_response(model: str, content: str, usage: Dict[str, int]) -> Dic
         kb_layer_frequency=adapter.config.kb_layer_frequency,
         kb_scale_factor=adapter.config.kb_scale_factor,
         kv_injected=adapter.config.inject_kv,
+        **metadata,
+    )
+
+
+def _invalid_output_response(
+    model: str,
+    raw_output: str,
+    usage: Dict[str, int],
+    exc: AndroidWorldOutputError,
+) -> Dict[str, Any]:
+    return _completion_response(
+        model,
+        raw_output,
+        usage,
+        output_valid=False,
+        raw_output=raw_output,
+        android_world_error={
+            "message": str(exc),
+            "type": "invalid_response_error",
+            "code": exc.code,
+            "param": "completion",
+        },
     )
 
 
@@ -505,15 +542,28 @@ def health() -> Dict[str, str]:
 def predict(request: PredictionRequest) -> Any:
     if adapter is None:
         raise HTTPException(status_code=503, detail="AtlasKV adapter is not initialized")
-    output, _usage = adapter.generate(request.prompt, request.max_tokens or 1024, request.temperature)
+    raw_output, _usage = adapter.generate(request.prompt, request.max_tokens or 1024, request.temperature)
     try:
-        output = _process_generated_output(request.prompt, output)
+        output = _process_generated_output(request.prompt, raw_output)
     except AndroidWorldOutputError as exc:
-        return openai_error_response(
-            str(exc), error_type="invalid_response_error", code=exc.code, param="completion"
-        )
+        return {
+            "text": raw_output,
+            "raw_output": raw_output,
+            "output_valid": False,
+            "android_world_error": {
+                "message": str(exc),
+                "type": "invalid_response_error",
+                "code": exc.code,
+                "param": "completion",
+            },
+            "kb_size": adapter.actual_kb_size,
+            "kb_layer_frequency": adapter.config.kb_layer_frequency,
+            "kb_scale_factor": adapter.config.kb_scale_factor,
+            "kv_injected": adapter.config.inject_kv,
+        }
     return {
         "text": output,
+        "output_valid": True,
         "kb_size": adapter.actual_kb_size,
         "kb_layer_frequency": adapter.config.kb_layer_frequency,
         "kb_scale_factor": adapter.config.kb_scale_factor,
@@ -538,7 +588,14 @@ def chat_completions(request: ChatCompletionRequest) -> Any:
             param="stream",
         )
 
-    prompt = messages_to_prompt(request.messages, adapter.config.include_image_placeholders)
+    rewritten_request = _payload_to_request(
+        rewrite_chat_completion_payload(
+            _request_to_payload(request),
+            adapter.config.prompt_strategy,
+            adapter.config.action_max_tokens,
+        )
+    )
+    prompt = messages_to_prompt(rewritten_request.messages, adapter.config.include_image_placeholders)
     if not prompt:
         return openai_error_response(
             "messages produced an empty prompt.",
@@ -547,14 +604,22 @@ def chat_completions(request: ChatCompletionRequest) -> Any:
             param="messages",
         )
 
-    output, usage = adapter.generate(prompt, request.max_tokens or 1024, request.temperature)
+    raw_output, usage = adapter.generate(prompt, rewritten_request.max_tokens or 1024, rewritten_request.temperature)
     try:
-        output = _process_generated_output(prompt, output)
+        output = _process_generated_output(prompt, raw_output)
     except AndroidWorldOutputError as exc:
-        return openai_error_response(
-            str(exc), error_type="invalid_response_error", code=exc.code, param="completion"
+        return _invalid_output_response(
+            rewritten_request.model or adapter.config.model_name,
+            raw_output,
+            usage,
+            exc,
         )
-    return _completion_response(request.model or adapter.config.model_name, output, usage)
+    return _completion_response(
+        rewritten_request.model or adapter.config.model_name,
+        output,
+        usage,
+        output_valid=True,
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -594,6 +659,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no_include_image_placeholders", action="store_false", dest="include_image_placeholders")
     parser.add_argument("--inject_kv", action="store_true", default=True)
     parser.add_argument("--disable_kv_injection", action="store_false", dest="inject_kv")
+    parser.add_argument(
+        "--prompt_strategy",
+        choices=["original", "request_enhanced_v1", "qkv_action_v1"],
+        default=os.environ.get("ATLASKV_PROMPT_STRATEGY", "original"),
+        help="Server-side AndroidWorld action prompt rewrite strategy.",
+    )
+    parser.add_argument(
+        "--action_max_tokens",
+        type=int,
+        default=int(os.environ.get("ATLASKV_ACTION_MAX_TOKENS", str(DEFAULT_ACTION_MAX_TOKENS))),
+        help="Maximum max_tokens used after rewriting AndroidWorld action prompts.",
+    )
     return parser
 
 
@@ -629,6 +706,8 @@ def _config_from_args(args: argparse.Namespace) -> AdapterConfig:
         clean_single_action=args.clean_single_action,
         include_image_placeholders=args.include_image_placeholders,
         inject_kv=args.inject_kv,
+        prompt_strategy=args.prompt_strategy,
+        action_max_tokens=args.action_max_tokens,
     )
 
 
