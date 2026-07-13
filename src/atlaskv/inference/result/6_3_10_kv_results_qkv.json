@@ -1,0 +1,155 @@
+[
+  {
+    "name": "ContactsAddContact_text",
+    "task": "ContactsAddContact",
+    "modality": "text",
+    "prompt_strategy": "qkv_action_v1",
+    "ok": true,
+    "http_status": 200,
+    "elapsed_sec": 3.18,
+    "content": "The next AndroidWorld action is Action: {\"action_type\": \"CREATE_CONTACT\", \"contact_name\": \"Alice Johnson\", \"contact_number\": \"415-555-0198\"}",
+    "action": {
+      "action_type": "CREATE_CONTACT",
+      "contact_name": "Alice Johnson",
+      "contact_number": "415-555-0198"
+    },
+    "action_error": null,
+    "usage": {
+      "prompt_tokens": 411,
+      "completion_tokens": 71,
+      "total_tokens": 482
+    },
+    "kb_size": "6",
+    "kb_layer_frequency": "3",
+    "kb_scale_factor": "10",
+    "kv_injected": true,
+    "response": null
+  },
+  {
+    "name": "ClockTimerEntry_text",
+    "task": "ClockTimerEntry",
+    "modality": "text",
+    "prompt_strategy": "qkv_action_v1",
+    "ok": true,
+    "http_status": 200,
+    "elapsed_sec": 2.474,
+    "content": "The next AndroidWorld action is Action: {\"action_type\": \"CREATE_TIMER\", \"timer_id\": 1, \"hours\": 0, \"minutes\": 5, \"seconds\": 30}",
+    "action": {
+      "action_type": "CREATE_TIMER",
+      "timer_id": 1,
+      "hours": 0,
+      "minutes": 5,
+      "seconds": 30
+    },
+    "action_error": null,
+    "usage": {
+      "prompt_tokens": 417,
+      "completion_tokens": 84,
+      "total_tokens": 501
+    },
+    "kb_size": "6",
+    "kb_layer_frequency": "3",
+    "kb_scale_factor": "10",
+    "kv_injected": true,
+    "response": null
+  },
+  {
+    "name": "SimpleSmsSend_text",
+    "task": "SimpleSmsSend",
+    "modality": "text",
+    "prompt_strategy": "qkv_action_v1",
+    "ok": true,
+    "http_status": 200,
+    "elapsed_sec": 3.866,
+    "content": "The next AndroidWorld action is Action: {\"action_type\": \"send_text_message\", \"text\": \"Hello, this is a test message.\"}",
+    "action": {
+      "action_type": "send_text_message",
+      "text": "Hello, this is a test message."
+    },
+    "action_error": null,
+    "usage": {
+      "prompt_tokens": 418,
+      "completion_tokens": 128,
+      "total_tokens": 546
+    },
+    "kb_size": "6",
+    "kb_layer_frequency": "3",
+    "kb_scale_factor": "10",
+    "kv_injected": true,
+    "response": null
+  },
+  {
+    "name": "ContactsNewContactDraft_image",
+    "task": "ContactsNewContactDraft",
+    "modality": "text_image",
+    "prompt_strategy": "qkv_action_v1",
+    "ok": true,
+    "http_status": 200,
+    "elapsed_sec": 0.519,
+    "content": "The next AndroidWorld action is Action: {\"action_type\": \"create_contact\"}",
+    "action": {
+      "action_type": "create_contact"
+    },
+    "action_error": null,
+    "usage": {
+      "prompt_tokens": 313,
+      "completion_tokens": 17,
+      "total_tokens": 330
+    },
+    "kb_size": "6",
+    "kb_layer_frequency": "3",
+    "kb_scale_factor": "10",
+    "kv_injected": true,
+    "response": null
+  },
+  {
+    "name": "ClockStopWatchRunning_image",
+    "task": "ClockStopWatchRunning",
+    "modality": "text_image",
+    "prompt_strategy": "qkv_action_v1",
+    "ok": true,
+    "http_status": 200,
+    "elapsed_sec": 0.514,
+    "content": "The final answer is Action: {\"action_type\": \"RUN THE STOPWATCH\"}",
+    "action": {
+      "action_type": "RUN THE STOPWATCH"
+    },
+    "action_error": null,
+    "usage": {
+      "prompt_tokens": 375,
+      "completion_tokens": 17,
+      "total_tokens": 392
+    },
+    "kb_size": "6",
+    "kb_layer_frequency": "3",
+    "kb_scale_factor": "10",
+    "kv_injected": true,
+    "response": null
+  },
+  {
+    "name": "SimpleSmsReply_image",
+    "task": "SimpleSmsReply",
+    "modality": "text_image",
+    "prompt_strategy": "qkv_action_v1",
+    "ok": true,
+    "http_status": 200,
+    "elapsed_sec": 1.823,
+    "content": "The next AndroidWorld action is Action: {\"action_type\": \"send_message\", \"phone_number\": \"718-555-0112\", \"message\": \"You just started!\"}",
+    "action": {
+      "action_type": "send_message",
+      "phone_number": "718-555-0112",
+      "message": "You just started!"
+    },
+    "action_error": null,
+    "usage": {
+      "prompt_tokens": 355,
+      "completion_tokens": 61,
+      "total_tokens": 416
+    },
+    "kb_size": "6",
+    "kb_layer_frequency": "3",
+    "kb_scale_factor": "10",
+    "kv_injected": true,
+    "response": null
+  }
+]
