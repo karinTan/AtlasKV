@@ -8,7 +8,7 @@ from typing import Any, Dict, Iterable, List, Literal, Optional, Tuple
 
 from atlaskv.android_world.protocol import PromptKind, classify_t3a_prompt
 
-PromptStrategy = Literal["original", "request_enhanced_v1", "qkv_action_v1"]
+PromptStrategy = Literal["original", "qkv_action_v1"]
 
 DEFAULT_ACTION_MAX_TOKENS = 128
 STRICT_ACTION_SYSTEM_PROMPT = (
@@ -34,11 +34,30 @@ Your Answer:
 QKV_ALLOWED_ACTIONS = """Valid action_type values:
 status, answer, click, long_press, input_text, keyboard_enter, navigate_home, navigate_back, scroll, open_app, wait.
 Use one of these JSON action shapes:
-Action: {"action_type": "click", "index": 0}
-Action: {"action_type": "input_text", "index": 0, "text": "text"}
-Action: {"action_type": "open_app", "app_name": "Contacts"}
-Action: {"action_type": "scroll", "direction": "down"}
-Action: {"action_type": "status", "goal_status": "complete"}"""
+- If you think the task has been completed, finish the task by using the status action with complete as goal_status:
+Action: {"action_type": "status", "goal_status": "complete"}
+- If you think the task is not feasible (including cases where you don't have enough information or cannot perform some necessary actions), finish the task by using the status action with infeasible as goal_status:
+Action: {"action_type": "status", "goal_status": "infeasible"}
+- Answer the user's question:
+Action: {"action_type": "answer", "text": <answer_text>}
+- Click/tap on a UI element (specified by its index) on the screen:
+Action: {"action_type": "click", "index": <target_index>}
+- Long press on a UI element (specified by its index) on the screen:
+Action: {"action_type": "long_press", "index": <target_index>}
+- Type text into a text field. This action automatically clicks the text field, enters the text, and presses Enter, so you do not need to click the field beforehand. Use the numeric label to indicate the target text field:
+Action: {"action_type": "input_text", "text": <text_input>, "index": <target_index>}
+- Press the Enter key:
+Action: {"action_type": "keyboard_enter"}
+- Navigate to the home screen:
+Action: {"action_type": "navigate_home"}
+- Navigate back:
+Action: {"action_type": "navigate_back"}
+- Scroll the screen or a scrollable UI element in one of the four directions. Specify the numeric index if scrolling a specific UI element; otherwise omit the index to scroll the whole screen:
+Action: {"action_type": "scroll", "direction": <up|down|left|right>, "index": <optional_target_index>}
+- Open an app (nothing will happen if the app is not installed):
+Action: {"action_type": "open_app", "app_name": <app_name>}
+- Wait for the screen to update:
+Action: {"action_type": "wait"}"""
 
 
 def _split_request_parts(original_request: Dict[str, Any]) -> Tuple[str, List[Dict[str, Any]]]:
@@ -145,11 +164,10 @@ def build_qkv_text_prompt(original_text: str, has_images: bool) -> str:
 
 The current AndroidWorld user goal is: {goal}
 History: {history}
-Observation: {image_note}
-{QKV_ALLOWED_ACTIONS}
-
 The visible UI elements are:
 {ui_elements}
+
+{QKV_ALLOWED_ACTIONS}
 
 Please answer in exactly this format:
 Reason: <one brief reason grounded in the goal, history, or visible UI elements>
@@ -177,10 +195,7 @@ def rewrite_chat_completion_payload(
         payload["max_tokens"] = min(int(requested_max_tokens), action_max_tokens)
 
     has_images = bool(image_parts)
-    if prompt_strategy == "request_enhanced_v1":
-        system_prompt = STRICT_ACTION_SYSTEM_PROMPT
-        text_prompt = build_enhanced_text_prompt(original_text, has_images)
-    elif prompt_strategy == "qkv_action_v1":
+    if prompt_strategy == "qkv_action_v1":
         system_prompt = None
         text_prompt = build_qkv_text_prompt(original_text, has_images)
     else:

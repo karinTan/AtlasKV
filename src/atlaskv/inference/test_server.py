@@ -661,7 +661,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--disable_kv_injection", action="store_false", dest="inject_kv")
     parser.add_argument(
         "--prompt_strategy",
-        choices=["original", "request_enhanced_v1", "qkv_action_v1"],
+        choices=["original", "qkv_action_v1"],
         default=os.environ.get("ATLASKV_PROMPT_STRATEGY", "original"),
         help="Server-side AndroidWorld action prompt rewrite strategy.",
     )
