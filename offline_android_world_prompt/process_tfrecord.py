@@ -14,9 +14,31 @@ PACKAGE_PARENT = Path(__file__).resolve().parent.parent
 if str(PACKAGE_PARENT) not in sys.path:
   sys.path.insert(0, str(PACKAGE_PARENT))
 
+from offline_android_world_prompt import action_profile
 from offline_android_world_prompt import build_qkv
 from offline_android_world_prompt import prompt_utils
+from offline_android_world_prompt import qkv_stats
 from offline_android_world_prompt import representation_utils
+
+
+_NO_ARGUMENT_ACTION_TYPES = frozenset({'navigate_back', 'navigate_home', 'wait'})
+_ALLOWED_SCROLL_DIRECTIONS = frozenset({'up', 'down', 'left', 'right'})
+ACTION_CONVERSION_RULES = {
+    'click': 'Use index if present; otherwise map x/y to a visible UI element index.',
+    'long_press': 'Use index if present; otherwise map x/y to a visible UI element index.',
+    'input_text': (
+        'Requires text. Use index if present; otherwise map x/y if present; '
+        'otherwise pick the best visible editable text field.'
+    ),
+    'scroll': 'Requires direction up/down/left/right; keep optional index if present.',
+    'open_app': 'Requires non-empty app_name.',
+    'answer': 'Requires non-empty text.',
+    'status': 'Requires goal_status complete or infeasible.',
+    'keyboard_enter': 'No extra parameters.',
+    'navigate_back': 'No extra parameters.',
+    'navigate_home': 'No extra parameters.',
+    'wait': 'No extra parameters.',
+}
 
 
 def _require_tensorflow():
@@ -107,24 +129,121 @@ def _screen_size(
   return 1080, 2400
 
 
+def _status_infeasible() -> dict[str, str]:
+  return {'action_type': 'status', 'goal_status': 'infeasible'}
+
+
+def _has_xy(action: dict[str, Any]) -> bool:
+  return 'x' in action and 'y' in action
+
+
+def _convert_point_action(
+    action: dict[str, Any],
+    ui_elements: list[representation_utils.UIElement],
+    screen_size: tuple[int, int],
+) -> tuple[dict[str, Any], str | None]:
+  """Converts click/long_press x/y actions into index actions."""
+  action_type = action.get('action_type')
+  if 'index' in action:
+    return {'action_type': action_type, 'index': action['index']}, None
+  if not _has_xy(action):
+    return _status_infeasible(), f'{action_type} requires index or both x and y.'
+
+  index = representation_utils.find_element_index_for_point(
+      ui_elements, screen_size, action['x'], action['y']
+  )
+  if index is None:
+    return (
+        _status_infeasible(),
+        f'{action_type} point ({action["x"]}, {action["y"]}) did not map to a visible UI element.',
+    )
+  return {'action_type': action_type, 'index': index}, None
+
+
+def _convert_input_text_action(
+    action: dict[str, Any],
+    ui_elements: list[representation_utils.UIElement],
+    screen_size: tuple[int, int],
+) -> tuple[dict[str, Any], str | None]:
+  """Converts input_text to the QKV index+text shape."""
+  if 'text' not in action:
+    return _status_infeasible(), 'input_text requires text.'
+
+  text = action['text']
+  if 'index' in action:
+    return {'action_type': 'input_text', 'index': action['index'], 'text': text}, None
+
+  if _has_xy(action):
+    index = representation_utils.find_element_index_for_point(
+        ui_elements, screen_size, action['x'], action['y']
+    )
+  else:
+    index = representation_utils.find_text_input_element_index(ui_elements, screen_size)
+
+  if index is None:
+    return (
+        _status_infeasible(),
+        'input_text could not find a visible editable UI element index.',
+    )
+  return {'action_type': 'input_text', 'index': index, 'text': text}, None
+
+
+def _convert_scroll_action(action: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
+  """Keeps scroll direction and optional UI element index."""
+  direction = action.get('direction')
+  if direction not in _ALLOWED_SCROLL_DIRECTIONS:
+    return _status_infeasible(), 'scroll requires direction in up/down/left/right.'
+  converted = {'action_type': 'scroll', 'direction': direction}
+  if 'index' in action:
+    converted['index'] = action['index']
+  return converted, None
+
+
+def _convert_open_app_action(action: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
+  app_name = action.get('app_name')
+  if not isinstance(app_name, str) or not app_name.strip():
+    return _status_infeasible(), 'open_app requires a non-empty app_name.'
+  return {'action_type': 'open_app', 'app_name': app_name}, None
+
+
+def _convert_answer_action(action: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
+  text = action.get('text')
+  if not isinstance(text, str) or not text.strip():
+    return _status_infeasible(), 'answer requires non-empty text.'
+  return {'action_type': 'answer', 'text': text}, None
+
+
+def _convert_status_action(action: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
+  goal_status = action.get('goal_status')
+  if goal_status not in {'complete', 'infeasible'}:
+    return _status_infeasible(), 'status requires goal_status complete or infeasible.'
+  return {'action_type': 'status', 'goal_status': goal_status}, None
+
+
 def _convert_action(
     action: dict[str, Any],
     ui_elements: list[representation_utils.UIElement],
     screen_size: tuple[int, int],
-) -> dict[str, Any]:
-  """Converts coordinate actions to Android World index actions when possible."""
-  converted = dict(action)
-  action_type = converted.get('action_type')
-  if action_type in {'click', 'long_press', 'input_text'}:
-    if 'index' not in converted and 'x' in converted and 'y' in converted:
-      index = representation_utils.find_element_index_for_point(
-          ui_elements, screen_size, converted['x'], converted['y']
-      )
-      if index is not None:
-        converted['index'] = index
-        converted.pop('x', None)
-        converted.pop('y', None)
-  return converted
+) -> tuple[dict[str, Any], str | None]:
+  """Converts one raw Android Control action to a QKV-safe AndroidWorld action."""
+  action_type = action.get('action_type')
+  if action_type in {'click', 'long_press'}:
+    return _convert_point_action(action, ui_elements, screen_size)
+  if action_type == 'input_text':
+    return _convert_input_text_action(action, ui_elements, screen_size)
+  if action_type == 'scroll':
+    return _convert_scroll_action(action)
+  if action_type == 'open_app':
+    return _convert_open_app_action(action)
+  if action_type == 'answer':
+    return _convert_answer_action(action)
+  if action_type == 'status':
+    return _convert_status_action(action)
+  if action_type == 'keyboard_enter':
+    return {'action_type': 'keyboard_enter'}, None
+  if action_type in _NO_ARGUMENT_ACTION_TYPES:
+    return {'action_type': action_type}, None
+  return _status_infeasible(), f'Unsupported action_type: {action_type!r}.'
 
 
 def _history_lines(
@@ -203,7 +322,9 @@ def process_examples(args: argparse.Namespace) -> int:
           forest,
           exclude_invisible_elements=True,
       )
-      target_action = _convert_action(actions[step_index], ui_elements, screen_size)
+      target_action, conversion_error = _convert_action(
+          actions[step_index], ui_elements, screen_size
+      )
       converted_actions.append(target_action)
 
       if args.agent == 'm3a':
@@ -247,6 +368,11 @@ def process_examples(args: argparse.Namespace) -> int:
           if step_index < len(step_instructions)
           else None
         ),
+        'previous_step_instruction': (
+          step_instructions[step_index - 1]
+          if step_index > 0 and step_index - 1 < len(step_instructions)
+          else None
+        ),
         'history': (
           '\n'.join(history)
           if history
@@ -256,6 +382,7 @@ def process_examples(args: argparse.Namespace) -> int:
         'prompt': prompt,
         'original_action': actions[step_index],
         'target_action': target_action,
+        'conversion_error': conversion_error,
       }
       rows.append(row)
       rows_written += 1
@@ -263,6 +390,14 @@ def process_examples(args: argparse.Namespace) -> int:
   if args.output_format in {'prompts', 'both'}:
     _write_json(prompts_path, rows)
     print(f'Wrote {rows_written} prompt rows to {prompts_path}')
+
+  if args.output_format in {'qkv', 'both', 'profile'} or args.action_profile_json:
+    profile = action_profile.summarize_prompt_rows(
+        rows, max_examples=args.action_profile_examples
+    )
+    action_profile.print_summary(profile)
+    if args.action_profile_json:
+      action_profile.write_summary(Path(args.action_profile_json), profile)
 
   if args.output_format in {'qkv', 'both'}:
     qkv_rows, stats = build_qkv.build_qkv_rows(
@@ -288,6 +423,10 @@ def process_examples(args: argparse.Namespace) -> int:
             **stats,
         )
     )
+    summary = qkv_stats.summarize_qkv_rows(qkv_rows, generation_stats=stats)
+    qkv_stats.print_summary(summary)
+    if args.qkv_stats_json:
+      qkv_stats.write_summary(Path(args.qkv_stats_json), summary)
 
   return rows_written
 
@@ -302,13 +441,30 @@ def main() -> None:
   parser.add_argument('--output-dir', required=True)
   parser.add_argument(
       '--output-format',
-      choices=['prompts', 'qkv', 'both'],
+      choices=['prompts', 'qkv', 'both', 'profile'],
       default='prompts',
-      help='Write prompt rows, final QKV rows, or both. qkv does not save prompts.json.',
+      help=(
+          'Write prompt rows, final QKV rows, both, or only the action profile. '
+          'qkv/profile do not save prompts.json.'
+      ),
   )
   parser.add_argument(
       '--qkv-output-json',
       help='QKV output path. Defaults to <output-dir>/qkv.json.',
+  )
+  parser.add_argument(
+      '--qkv-stats-json',
+      help='Optional path for writing QKV generation summary stats as JSON.',
+  )
+  parser.add_argument(
+      '--action-profile-json',
+      help='Optional path for writing raw/converted action profile JSON.',
+  )
+  parser.add_argument(
+      '--action-profile-examples',
+      type=int,
+      default=3,
+      help='Number of example actions to keep per action type/profile section.',
   )
   parser.add_argument('--agent', choices=['t3a', 'm3a'], default='t3a')
   parser.add_argument(

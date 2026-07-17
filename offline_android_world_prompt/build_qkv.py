@@ -15,8 +15,12 @@ from typing import Any, Iterable
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SRC_ROOT = REPO_ROOT / 'src'
+if str(REPO_ROOT) not in sys.path:
+  sys.path.insert(0, str(REPO_ROOT))
 if str(SRC_ROOT) not in sys.path:
   sys.path.insert(0, str(SRC_ROOT))
+
+from offline_android_world_prompt import qkv_stats  # pylint: disable=wrong-import-position
 
 from atlaskv.android_world.protocol import (  # pylint: disable=wrong-import-position
     AndroidWorldOutputError,
@@ -31,6 +35,8 @@ from atlaskv.android_world.prompt_strategy import (  # pylint: disable=wrong-imp
 _UI_ELEMENT_RE = re.compile(r'\bUI\s+element\s+(\d+)\s*:', re.IGNORECASE)
 _SAFE_NAME_RE = re.compile(r'[^0-9A-Za-z_]+')
 _LEADING_WORD_RE = re.compile(r'^([A-Za-z]+)(\b.*)?$')
+_LONG_PRESS_RE = re.compile(r'^(?:long[-\s]?press|long[-\s]?pressing|longing press)\b', re.IGNORECASE)
+_HISTORY_INSTRUCTION_RE = re.compile(r'Instruction:\s*(.*?)(?:\.\s*(?:Step|$)|$)')
 _VOWELS = frozenset('aeiou')
 
 _IRREGULAR_GERUNDS = {
@@ -41,11 +47,71 @@ _IRREGULAR_GERUNDS = {
     'get': 'getting',
     'go': 'going',
     'have': 'having',
+    'make': 'making',
     'open': 'opening',
     'run': 'running',
     'set': 'setting',
     'stop': 'stopping',
     'tap': 'tapping',
+}
+
+_IRREGULAR_PARTICIPLES = {
+    'be': 'been',
+    'begin': 'begun',
+    'do': 'done',
+    'get': 'gotten',
+    'go': 'gone',
+    'have': 'had',
+    'input': 'input',
+    'make': 'made',
+    'open': 'opened',
+    'run': 'run',
+    'send': 'sent',
+    'set': 'set',
+    'take': 'taken',
+    'visit': 'visited',
+    'write': 'written',
+}
+
+_GERUND_PARTICIPLES = {
+    'adding': 'added',
+    'checking': 'checked',
+    'choosing': 'chosen',
+    'clearing': 'cleared',
+    'clicking': 'clicked',
+    'closing': 'closed',
+    'creating': 'created',
+    'decreasing': 'decreased',
+    'deleting': 'deleted',
+    'disabling': 'disabled',
+    'enabling': 'enabled',
+    'entering': 'entered',
+    'getting': 'gotten',
+    'going': 'gone',
+    'increasing': 'increased',
+    'making': 'made',
+    'moving': 'moved',
+    'navigating': 'navigated',
+    'opening': 'opened',
+    'pressing': 'pressed',
+    'returning': 'returned',
+    'saving': 'saved',
+    'scrolling': 'scrolled',
+    'searching': 'searched',
+    'selecting': 'selected',
+    'sending': 'sent',
+    'setting': 'set',
+    'sharing': 'shared',
+    'starting': 'started',
+    'stopping': 'stopped',
+    'swiping': 'swiped',
+    'tapping': 'tapped',
+    'taking': 'taken',
+    'typing': 'typed',
+    'using': 'used',
+    'viewing': 'viewed',
+    'waiting': 'waited',
+    'writing': 'written',
 }
 
 
@@ -65,6 +131,14 @@ def _clean_text(value: Any, default: str = '') -> str:
   if value is None:
     return default
   return ' '.join(str(value).split()) or default
+
+
+def _clean_instruction(value: Any, default: str = '') -> str:
+  text = _clean_text(value, default)
+  text = text.strip(' .')
+  if text.lower().startswith('to '):
+    text = text[3:].strip()
+  return text
 
 
 def _history_text(value: Any) -> str:
@@ -100,15 +174,79 @@ def _to_gerund(verb: str) -> str:
   return lower + 'ing'
 
 
+def _to_past_participle(verb: str) -> str:
+  lower = verb.lower()
+  if lower.endswith('ing'):
+    return _GERUND_PARTICIPLES.get(lower, _to_past_participle(_base_from_gerund(lower)))
+  if lower in _IRREGULAR_PARTICIPLES:
+    return _IRREGULAR_PARTICIPLES[lower]
+  if lower.endswith('e'):
+    return lower + 'd'
+  if (
+      len(lower) >= 3
+      and lower[-1] not in _VOWELS
+      and lower[-2] in _VOWELS
+      and lower[-3] not in _VOWELS
+      and lower[-1] not in {'w', 'x', 'y'}
+  ):
+    return lower + lower[-1] + 'ed'
+  return lower + 'ed'
+
+
+def _base_from_gerund(verb: str) -> str:
+  lower = verb.lower()
+  if not lower.endswith('ing') or len(lower) <= 4:
+    return lower
+  if lower.endswith('ying'):
+    return lower[:-4] + 'ie'
+  stem = lower[:-3]
+  if (
+      len(stem) >= 3
+      and stem[-1] == stem[-2]
+      and stem[-1] not in _VOWELS
+      and stem[-3] in _VOWELS
+  ):
+    return stem[:-1]
+  if stem.endswith(('ak', 'av', 'az', 'os', 'ov', 'yp', 'rit')):
+    return stem + 'e'
+  return stem
+
+
 def _goal_phrase(value: Any) -> str:
-  text = _clean_text(value, 'the current task')
-  if text.lower().startswith('to '):
-    text = text[3:].strip()
+  text = _clean_instruction(value, 'the current task')
+  match = _LONG_PRESS_RE.match(text)
+  if match:
+    return 'long pressing' + text[match.end():]
   match = _LEADING_WORD_RE.match(text)
   if not match:
     return text
   verb, rest = match.group(1), match.group(2) or ''
   return f'{_to_gerund(verb)}{rest}'
+
+
+def _completed_goal_phrase(value: Any | None) -> str:
+  if not value:
+    return 'starting from the initial state'
+  text = _clean_instruction(value)
+  if not text:
+    return 'starting from the initial state'
+  match = _LONG_PRESS_RE.match(text)
+  if match:
+    return 'having long pressed' + text[match.end():]
+  match = _LEADING_WORD_RE.match(text)
+  if not match:
+    return f'having completed {text}'
+  verb, rest = match.group(1), match.group(2) or ''
+  return f'having {_to_past_participle(verb)}{rest}'
+
+
+def _last_instruction_from_history(history: Any) -> str | None:
+  if not history:
+    return None
+  matches = _HISTORY_INSTRUCTION_RE.findall(str(history))
+  if not matches:
+    return None
+  return _clean_text(matches[-1])
 
 
 def _visible_indices(ui_elements_description: str) -> frozenset[int] | None:
@@ -194,10 +332,16 @@ def _action_phrase(action: dict[str, Any]) -> str:
 
 
 def _key_string(row: dict[str, Any], action: dict[str, Any]) -> str:
-  task = _goal_phrase(
+  current_goal = _goal_phrase(
       row.get('step_instruction') or row.get('goal') or row.get('episode_goal'),
   )
-  return f'The next AndroidWorld action for {task} by {_action_phrase(action)}'
+  previous_goal = (
+      row.get('previous_step_instruction') or _last_instruction_from_history(row.get('history'))
+  )
+  return (
+      'The next AndroidWorld action for '
+      f'{current_goal} by {_completed_goal_phrase(previous_goal)}'
+  )
 
 
 def _reason_for_action(
@@ -249,6 +393,12 @@ def _reason_for_action(
   if action_type == 'status':
     if action.get('goal_status') == 'complete':
       return 'The recorded episode has reached its final state, so the task is complete.'
+    conversion_error = _clean_text(row.get('conversion_error'))
+    if conversion_error:
+      return (
+          'The recorded target action could not be converted into a valid '
+          f'AndroidWorld action because {conversion_error}'
+      )
     return 'The required action cannot be safely performed from this state.'
   if action_type == 'answer':
     return 'The requested information is available, so I should answer the user directly.'
@@ -312,6 +462,12 @@ def _build_qkv_row(
   }
 
 
+def _action_type_from_qkv_row(row: dict[str, Any]) -> str | None:
+  _, action = normalize_and_validate_action_output(row['description'])
+  action_type = action.get('action_type')
+  return action_type if isinstance(action_type, str) else None
+
+
 def _sort_episode_rows(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
   return sorted(rows, key=lambda row: int(row.get('step_index', 0)))
 
@@ -327,6 +483,7 @@ def _make_keyboard_enter_context(
     context = copy.deepcopy(row)
     context['history'] = _append_history(row, input_action)
   context['step_instruction'] = row.get('step_instruction')
+  context['previous_step_instruction'] = row.get('step_instruction')
   context['step_index'] = f'{row.get("step_index", 0)}_keyboard_enter'
   return context
 
@@ -334,6 +491,7 @@ def _make_keyboard_enter_context(
 def _make_terminal_context(row: dict[str, Any], final_action: dict[str, Any]) -> dict[str, Any]:
   context = copy.deepcopy(row)
   context['history'] = _append_history(row, final_action)
+  context['previous_step_instruction'] = row.get('step_instruction')
   context['step_index'] = f'{row.get("step_index", 0)}_terminal_complete'
   return context
 
@@ -354,32 +512,37 @@ def build_qkv_rows(
 
   qkv_rows: list[dict[str, Any]] = []
   invalid_actions = 0
+  conversion_error_rows = 0
   keyboard_enter_rows = 0
   terminal_rows = 0
 
   for episode_id in sorted(episodes):
     episode_rows = _sort_episode_rows(episodes[episode_id])
     for index, row in enumerate(episode_rows):
+      if row.get('conversion_error'):
+        conversion_error_rows += 1
       target_action = row.get('target_action') or {}
       action_type = target_action.get('action_type', 'unknown')
+      built_row: dict[str, Any] | None = None
       try:
-        qkv_rows.append(_build_qkv_row(row, target_action, _safe_name(action_type)))
+        built_row = _build_qkv_row(row, target_action, _safe_name(action_type))
+        qkv_rows.append(built_row)
       except AndroidWorldOutputError as exc:
         invalid_actions += 1
         if invalid_action_policy == 'skip':
           continue
-        qkv_rows.append(
-            _build_qkv_row(
-                row,
-                target_action,
-                f'{_safe_name(action_type)}_infeasible',
-                invalid_error=str(exc),
-            )
+        built_row = _build_qkv_row(
+            row,
+            target_action,
+            f'{_safe_name(action_type)}_infeasible',
+            invalid_error=str(exc),
         )
+        qkv_rows.append(built_row)
 
       if (
           keyboard_enter_after_input_text
-          and target_action.get('action_type') == 'input_text'
+          and built_row is not None
+          and _action_type_from_qkv_row(built_row) == 'input_text'
       ):
         next_row = episode_rows[index + 1] if index + 1 < len(episode_rows) else None
         keyboard_context = _make_keyboard_enter_context(row, next_row, target_action)
@@ -409,6 +572,7 @@ def build_qkv_rows(
       'prompt_rows': len(prompt_rows),
       'qkv_rows': len(qkv_rows),
       'invalid_actions': invalid_actions,
+      'conversion_error_rows': conversion_error_rows,
       'keyboard_enter_rows': keyboard_enter_rows,
       'terminal_rows': terminal_rows,
   }
@@ -424,6 +588,10 @@ def convert_prompts_to_qkv(args: argparse.Namespace) -> dict[str, int]:
       terminal_complete=args.terminal_complete,
   )
   _write_json(Path(args.output_json), qkv_rows)
+  summary = qkv_stats.summarize_qkv_rows(qkv_rows, generation_stats=stats)
+  qkv_stats.print_summary(summary)
+  if args.qkv_stats_json:
+    qkv_stats.write_summary(Path(args.qkv_stats_json), summary)
   return stats
 
 
@@ -440,6 +608,10 @@ def build_parser() -> argparse.ArgumentParser:
       '--output-json',
       default=str(REPO_ROOT / 'data' / 'out' / 'qkv.json'),
       help='Path for generated qkv.json.',
+  )
+  parser.add_argument(
+      '--qkv-stats-json',
+      help='Optional path for writing QKV generation summary stats as JSON.',
   )
   parser.add_argument(
       '--invalid-action-policy',

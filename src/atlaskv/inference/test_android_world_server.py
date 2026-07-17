@@ -151,8 +151,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--case", action="append", help="Run only the named case; can be passed multiple times")
     parser.add_argument(
         "--prompt-strategy",
-        choices=["original", "request_enhanced_v1", "qkv_action_v1"],
-        default="request_enhanced_v1",
+        choices=["original", "qkv_action_v1"],
+        default="qkv_action_v1",
         help=(
             "Send the original request, use a compact output-focused request, or send only "
             "AtlasKV's textual Q while the server injects pre-encoded K/V vectors"

@@ -202,3 +202,31 @@ def find_element_index_for_point(
   if not candidates:
     return None
   return sorted(candidates)[0][2]
+
+
+def find_text_input_element_index(
+    ui_elements: list[UIElement],
+    screen_width_height_px: tuple[int, int],
+) -> int | None:
+  """Finds the best visible text field for an input_text action without x/y."""
+  candidates = []
+  for index, element in enumerate(ui_elements):
+    if not validate_ui_element(element, screen_width_height_px):
+      continue
+    editable = bool(element.is_editable)
+    if not editable:
+      continue
+    bbox = element.bbox_pixels
+    area = bbox.area if bbox is not None else float('inf')
+    candidates.append(
+        (
+            not bool(element.is_focused),
+            not bool(element.is_enabled),
+            area,
+            index,
+        )
+    )
+
+  if not candidates:
+    return None
+  return sorted(candidates)[0][3]
