@@ -31,33 +31,112 @@ Rules:
 Your Answer:
 """
 
-QKV_ALLOWED_ACTIONS = """Valid action_type values:
-status, answer, click, long_press, input_text, keyboard_enter, navigate_home, navigate_back, scroll, open_app, wait.
-Use one of these JSON action shapes:
-- If you think the task has been completed, finish the task by using the status action with complete as goal_status:
-Action: {"action_type": "status", "goal_status": "complete"}
-- If you think the task is not feasible (including cases where you don't have enough information or cannot perform some necessary actions), finish the task by using the status action with infeasible as goal_status:
-Action: {"action_type": "status", "goal_status": "infeasible"}
-- Answer the user's question:
-Action: {"action_type": "answer", "text": <answer_text>}
-- Click/tap on a UI element (specified by its index) on the screen:
-Action: {"action_type": "click", "index": <target_index>}
-- Long press on a UI element (specified by its index) on the screen:
-Action: {"action_type": "long_press", "index": <target_index>}
-- Type text into a text field. This action automatically clicks the text field, enters the text, and presses Enter, so you do not need to click the field beforehand. Use the numeric label to indicate the target text field:
-Action: {"action_type": "input_text", "text": <text_input>, "index": <target_index>}
-- Press the Enter key:
-Action: {"action_type": "keyboard_enter"}
-- Navigate to the home screen:
-Action: {"action_type": "navigate_home"}
-- Navigate back:
-Action: {"action_type": "navigate_back"}
-- Scroll the screen or a scrollable UI element in one of the four directions. Specify the numeric index if scrolling a specific UI element; otherwise omit the index to scroll the whole screen:
-Action: {"action_type": "scroll", "direction": <up|down|left|right>, "index": <optional_target_index>}
-- Open an app (nothing will happen if the app is not installed):
-Action: {"action_type": "open_app", "app_name": <app_name>}
-- Wait for the screen to update:
-Action: {"action_type": "wait"}"""
+QKV_ALLOWED_ACTIONS = """Allowed action JSON shapes:
+Action: {"action_type":"status","goal_status":"complete"}
+Action: {"action_type":"status","goal_status":"infeasible"}
+Action: {"action_type":"answer","text":"..."}
+Action: {"action_type":"click","index":0}
+Action: {"action_type":"long_press","index":0}
+Action: {"action_type":"input_text","text":"...","index":0}
+Action: {"action_type":"keyboard_enter"}
+Action: {"action_type":"navigate_home"}
+Action: {"action_type":"navigate_back"}
+Action: {"action_type":"scroll","direction":"up|down|left|right"}
+Action: {"action_type":"scroll","direction":"up|down|left|right","index":0}
+Action: {"action_type":"open_app","app_name":"..."}
+Action: {"action_type":"wait"}"""
+
+_NOISY_UI_PACKAGES = frozenset({
+    "com.android.systemui",
+})
+_GENERIC_UI_RESOURCE_SUFFIXES = frozenset({
+    "container",
+    "content",
+    "decor_view",
+    "navigationBarBackground",
+    "status_bar_launch_animation_container",
+    "wifi_signal",
+})
+_INFORMATIVE_TRUE_FIELDS = (
+    "is_clickable",
+    "is_editable",
+    "is_scrollable",
+    "is_selected",
+    "is_checked",
+    "is_focused",
+)
+_TEXT_FIELDS = ("text", "content_description", "hint_text", "tooltip")
+
+
+def _quoted_field_value(line: str, field_name: str) -> str:
+    python_match = re.search(
+        rf"\b{re.escape(field_name)}=('(?:\\'|[^'])*'|None|True|False)",
+        line,
+    )
+    if python_match:
+        raw = python_match.group(1)
+        if raw in {"None", "False"}:
+            return ""
+        if raw == "True":
+            return "True"
+        return raw[1:-1].replace("\\'", "'")
+
+    json_match = re.search(
+        rf'"{re.escape(field_name)}":\s*("(?:\\"|[^"])*"|null|true|false)',
+        line,
+    )
+    if json_match:
+        raw = json_match.group(1)
+        if raw in {"null", "false"}:
+            return ""
+        if raw == "true":
+            return "True"
+        try:
+            return str(json.loads(raw))
+        except json.JSONDecodeError:
+            return raw.strip('"')
+    return ""
+
+
+def _is_true_field(line: str, field_name: str) -> bool:
+    return bool(
+        re.search(rf"\b{re.escape(field_name)}=True\b", line)
+        or re.search(rf'"{re.escape(field_name)}":\s*true\b', line)
+    )
+
+
+def _is_generic_resource(resource_name: str) -> bool:
+    suffix = resource_name.split("/")[-1]
+    return suffix in _GENERIC_UI_RESOURCE_SUFFIXES
+
+
+def _is_informative_ui_line(line: str) -> bool:
+    if any(_quoted_field_value(line, field_name) for field_name in _TEXT_FIELDS):
+        return True
+    if any(_is_true_field(line, field_name) for field_name in _INFORMATIVE_TRUE_FIELDS):
+        return True
+    resource_name = _quoted_field_value(line, "resource_name")
+    return bool(resource_name and not _is_generic_resource(resource_name))
+
+
+def filter_android_world_ui_elements(
+    ui_elements: str,
+    *,
+    include_system_ui: bool = False,
+) -> str:
+    """Remove AndroidWorld UI lines that are unlikely to help action selection."""
+
+    kept_lines: List[str] = []
+    for line in ui_elements.splitlines():
+        if not line.strip():
+            continue
+        package_name = _quoted_field_value(line, "package_name")
+        if package_name in _NOISY_UI_PACKAGES and not include_system_ui:
+            continue
+        if not _is_informative_ui_line(line):
+            continue
+        kept_lines.append(line)
+    return "\n".join(kept_lines)
 
 
 def _split_request_parts(original_request: Dict[str, Any]) -> Tuple[str, List[Dict[str, Any]]]:
@@ -154,7 +233,11 @@ def build_qkv_text_prompt(original_text: str, has_images: bool) -> str:
 
     goal = _extract_goal(original_text) or "Unknown goal."
     history = _extract_history(original_text) or "No previous action."
-    ui_elements = _extract_ui_elements(original_text) or "No UI element details were found."
+    raw_ui_elements = _extract_ui_elements(original_text)
+    ui_elements = (
+        filter_android_world_ui_elements(raw_ui_elements)
+        or "No UI element details were found."
+    )
     image_note = (
         "Screenshots are attached as image inputs. Use the labeled screenshot together with UI element indexes."
         if has_images

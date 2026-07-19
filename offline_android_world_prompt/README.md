@@ -1,250 +1,418 @@
-# Offline Android World Prompt Builder
+# Offline AndroidWorld QKV Pipeline
 
-This folder contains a small self-contained copy of the Android World prompt/QKV
-construction path needed for TFRecord data:
+This directory builds AndroidWorld-style AtlasKV data from Android Control
+TFRecord shards.
+
+The intended pipeline is:
 
 ```text
-TFRecord(GZIP)
-  -> tf.train.Example
-  -> accessibility_trees[i] bytes
-  -> AndroidAccessibilityForest.ParseFromString(...)
-  -> forest_to_ui_elements(...)
-  -> T3A/M3A ui_elements text in memory
-  -> AtlasKV qkv.json
+Android Control TFRecord shards
+  -> qkv.json
+  -> qkv_6000.json
+  -> qkv_6000_deepseek_key.json
+  -> key/value embedding .npy files
+  -> AtlasKV training or inference
 ```
 
-It intentionally does not import `android_world.*`, so you can run it next to a
-dataset without relying on the local repo package layout. It still needs the
-same external runtime dependencies that your `data.py` already uses:
+The important design choice for the current version:
+
+```text
+Q does not contain Current state summary.
+K/key_string contains the distilled current-screen summary.
+V/description contains the distilled Reason: ... and the original Action: ...
+```
+
+So the model-side runtime prompt stays close to the AndroidWorld prompt, while
+the key embedding gets a shorter semantic description for retrieval and the
+value embedding gets a better rationale for the supervised target action.
+
+## 0. Work From Repo Root
+
+Run commands from:
+
+```bash
+cd /Users/tankling/Documents/all_my_files/coding/AtlasKV
+```
+
+If imports fail, set:
+
+```bash
+export PYTHONPATH=/Users/tankling/Documents/all_my_files/coding/AtlasKV/src
+```
+
+The TFRecord conversion step needs the same environment that can import
 `tensorflow` and `android_env`.
 
-## Run
+## 1. Extract QKV From TFRecords
 
-From `/Users/kailing.tan/AtlasKV/offline_android_world_prompt`:
+Use this to rebuild the full local QKV file from the Android Control shards:
 
 ```bash
-python3 ./process_tfrecord.py \
-  --input-glob "/Users/kailing.tan/AtlasKV/data/in/android_control*" \
-  --output-dir /Users/kailing.tan/AtlasKV/data/out/ \
+python3 offline_android_world_prompt/process_tfrecord.py \
+  --input-glob "data/in/android_control_android_control-*" \
+  --output-dir data/out \
   --output-format qkv \
-  --qkv-output-json /Users/kailing.tan/AtlasKV/data/out/android_control_seed_qkv.json \
-  --qkv-stats-json /Users/kailing.tan/AtlasKV/data/out/android_control_seed_qkv_stats.json \
-  --agent t3a
+  --qkv-output-json data/out/qkv.json \
+  --qkv-stats-json data/out/qkv_stats.json \
+  --agent t3a \
+  --goal-mode episode
 ```
 
-Main output:
+Expected outputs:
 
 ```text
-/Users/kailing.tan/AtlasKV/data/out/android_control_seed_qkv.json
-/Users/kailing.tan/AtlasKV/data/out/android_control_seed_qkv_stats.json
+data/out/qkv.json
+data/out/qkv_stats.json
 ```
 
-## CLI Parameters
+Regenerate this file after prompt-template changes. Do not reuse an older
+`qkv.json` or `qkv_6000.json` that still contains `Current state summary` inside
+`Q`.
 
-`process_tfrecord.py` exposes the following arguments:
+On the five local shards previously checked, this produced about 26K QKV rows:
 
-| Parameter | Required | Default | Applies to | Purpose |
-| --- | --- | --- | --- | --- |
-| `--input-glob` | yes | none | all modes | Glob pattern for input Android Control TFRecord files. |
-| `--output-dir` | yes | none | all modes | Output directory. Also provides default paths for `prompts.json` and `qkv.json`. |
-| `--output-format` | no | `prompts` | all modes | Selects output mode: `prompts`, `qkv`, `both`, or `profile`. Use `qkv` for direct final QKV generation. |
-| `--qkv-output-json` | no | `<output-dir>/qkv.json` | `qkv`, `both` | Path for final QKV JSON. |
-| `--qkv-stats-json` | no | not written | `qkv`, `both` | Optional path for QKV statistics JSON. The summary is printed even when this is omitted. |
-| `--action-profile-json` | no | not written | all modes | Optional path for action profile JSON. If passed, the profile is generated and saved. |
-| `--action-profile-examples` | no | `3` | profile generation | Number of example rows to keep per action type and error section in the action profile. |
-| `--agent` | no | `t3a` | prompt/UI text generation | UI element prompt format. `t3a` is the compact text-agent format; `m3a` uses the multimodal-agent style. |
-| `--goal-mode` | no | `episode` | all modes | Chooses the goal text in prompts/Q: `episode` uses the whole episode goal; `step_instruction` uses the current step instruction. |
-| `--teacher-history-json` | no | none | all modes | Optional externally generated history summaries keyed by `episode_id`. If omitted, history is built from converted prior actions. |
-| `--invalid-action-policy` | no | `status_infeasible` | `qkv`, `both` | Handles actions that still fail QKV validation: `status_infeasible` converts them to `status infeasible`; `skip` drops them. |
-| `--no-keyboard-enter-after-input-text` | no | disabled flag, so keyboard enter is added | `qkv`, `both` | Turns off the synthetic `keyboard_enter` row normally added after each valid `input_text` row. |
-| `--no-terminal-complete` | no | disabled flag, so terminal complete is added | `qkv`, `both` | Turns off the synthetic `status complete` row normally added at the end of each episode. |
-| `--max-records` | no | all records | all modes | Limits the number of TFRecord examples processed. Useful for sampling/debugging. |
+```text
+total_qkv_rows: 25911
+episode_count: 3825
+real action steps: 20698
+synthetic terminal_complete rows: 3825
+synthetic keyboard_enter_after_input_text rows: 1388
+```
 
-For the current QKV-only generation path, the important parameters are
-`--input-glob`, `--output-dir`, `--output-format qkv`, `--qkv-output-json`, and
-`--qkv-stats-json`. The remaining parameters are debugging or strategy
-overrides.
-
-Each QKV row contains:
-
-- `name`
-- `description_type`
-- `reason`
-- `description`
-- `Q`
-- `A`
-- `key_string`
-- `extended_Q`
-- `extended_A`
-
-`--output-format qkv` writes the final QKV file directly and does not save
-`prompts.json`. Use `--output-format both` if you also want a prompt-row
-debugging file, `--output-format prompts` for the old prompt-only output, or
-`--output-format profile` to only inspect raw/converted action shapes.
-
-## Prompt Debug Output
-
-When `prompts.json` is written, the JSON array contains objects with these
-fields:
-
-- `episode_id`
-- `step_index`
-- `episode_goal`
-- `goal`
-- `step_instruction`
-- `history`
-- `ui_elements_description`
-- `prompt`
-- `original_action`
-- `target_action`
-- `previous_step_instruction`
-
-For click/long-press actions with `x`/`y`, `target_action` tries to map the
-point to the best visible UI element index.
-
-## Build QKV Data
-
-`process_tfrecord.py --output-format qkv` is the preferred one-step path. If
-you already have a `prompts.json` from a previous run, you can still convert it
-directly:
+You can re-check any QKV file with:
 
 ```bash
-python3 offline_android_world_prompt/build_qkv.py \
-  --prompts-json /Users/kailing.tan/AtlasKV/data/out/prompts.json \
-  --output-json /Users/kailing.tan/AtlasKV/data/out/qkv.json \
-  --qkv-stats-json /Users/kailing.tan/AtlasKV/data/out/qkv_stats.json
+python3 offline_android_world_prompt/qkv_stats.py \
+  --qkv-json data/out/qkv.json \
+  --summary-json data/out/qkv_stats_confirm.json
 ```
 
-`Q` follows the same compact AndroidWorld query structure as AtlasKV's
-`qkv_action_v1` prompt strategy: overall user goal, history, visible UI
-elements, allowed action shapes, and the required `Reason`/`Action` answer
-format.
+## 2. QKV Row Format
 
-The converter uses deterministic reason templates. For example, `open_app`
-mentions the app name, index actions mention the target UI element index, and
-`input_text` mentions both the text and target index. It also:
-
-- validates actions with the AtlasKV AndroidWorld action validator,
-- requires QKV `click` and `long_press` actions to use UI indexes instead of
-  raw coordinates,
-- converts invalid target actions to
-  `{"action_type":"status","goal_status":"infeasible"}` by default,
-- adds a synthetic `keyboard_enter` row after each `input_text` row, and
-- adds one synthetic `status complete` row at the end of each episode.
-
-Use `--invalid-action-policy skip`,
-`--no-keyboard-enter-after-input-text`, or `--no-terminal-complete` to disable
-those defaults.
-
-`key_string` uses the template
-`The next AndroidWorld action for {current_goal} by {previous_state}`.
-Instruction text is normalized with deterministic morphology rules before it
-is inserted into the template: imperative goals become gerunds (`Open ...` ->
-`opening ...`), and the previous instruction becomes a completed-state phrase
-(`Open ...` -> `having opened ...`, `clicking ...` -> `having clicked ...`).
-
-## Action Profile
-
-Before QKV rows are generated, `process_tfrecord.py` can print and save an
-action profile so the raw action parameters are visible by action type. This is
-the quick check for whether new TFRecord actions need conversion logic before
-they are trusted as QKV labels.
-
-The profile includes:
-
-- original action type counts,
-- converted action type counts,
-- field names and field value types for every action type,
-- a few examples per action type, and
-- converted actions that would fail QKV validation.
-
-You can also profile an existing prompt-row file directly:
-
-```bash
-python3 ./action_profile.py \
-  --prompts-json /Users/kailing.tan/AtlasKV/data/out/prompts.json \
-  --profile-json /Users/kailing.tan/AtlasKV/data/out/action_profile.json
-```
-
-Or profile TFRecords directly without saving prompts or QKV rows:
-
-```bash
-python3 ./process_tfrecord.py \
-  --input-glob "/Users/kailing.tan/AtlasKV/data/in/android_control*" \
-  --output-dir /Users/kailing.tan/AtlasKV/data/out/ \
-  --output-format profile \
-  --action-profile-json /Users/kailing.tan/AtlasKV/data/out/action_profile.json
-```
-
-## Action Conversion Rules
-
-The TFRecord action is kept as `original_action`. The label used by QKV is
-`target_action`. If a raw action cannot be converted to a valid QKV action, the
-converter writes `target_action` as
-`{"action_type":"status","goal_status":"infeasible"}` and records the cause in
-`conversion_error`.
-
-Current rules:
-
-- `click`: use `index` if present; otherwise map `x`/`y` to the best visible UI
-  element index. If no index can be found, convert to `status infeasible`.
-- `long_press`: same as `click`, but the output action type remains
-  `long_press`.
-- `input_text`: requires `text`. Use `index` if present; otherwise map `x`/`y`
-  if present; otherwise choose the best visible editable text field. If no text
-  field index can be found, convert to `status infeasible`.
-- `scroll`: requires `direction` in `up`, `down`, `left`, or `right`; preserves
-  optional `index` when present.
-- `open_app`: requires a non-empty `app_name`.
-- `answer`: requires non-empty `text`.
-- `status`: requires `goal_status` to be `complete` or `infeasible`.
-- `keyboard_enter`, `navigate_back`, `navigate_home`, `wait`: no extra
-  parameters are kept.
-- unknown action types: convert to `status infeasible`.
-
-## QKV Stats
-
-When QKV output is enabled, `process_tfrecord.py` prints a generation summary
-after writing `qkv.json`. If `--qkv-stats-json` is passed, the same summary is
-also saved as structured JSON.
-
-The summary includes:
-
-- total QKV rows,
-- source prompt-row generation counts,
-- description type counts,
-- episode count,
-- action type distribution,
-- status goal distribution,
-- synthetic row counts,
-- average/min/max original steps per episode, and
-- average/min/max QKV rows per episode.
-
-You can also summarize an existing QKV file directly:
-
-```bash
-python3 ./qkv_stats.py \
-  --qkv-json /Users/kailing.tan/AtlasKV/data/out/qkv.json \
-  --summary-json /Users/kailing.tan/AtlasKV/data/out/qkv_stats.json
-```
-
-## Teacher History
-
-If you generate history summaries with a teacher model, save them as JSON:
+Each generated row has:
 
 ```json
 {
-  "0": [
-    "Action selected: {\"action_type\": \"open_app\", \"app_name\": \"Zoho Meeting\"}. Opened Zoho Meeting.",
-    "Action selected: {\"action_type\": \"wait\"}. Waited for the app to load."
-  ]
+  "name": "aw_<episode>_<step>_<action_type>",
+  "description_type": "next AndroidWorld action",
+  "reason": "...",
+  "description": "Reason: ...\nAction: {...}",
+  "Q": "...",
+  "A": "Reason: ...\nAction: {...}",
+  "key_string": "For the AndroidWorld goal of ..., after ..., the current screen shows the visible UI elements, and the next action should be",
+  "extended_Q": "",
+  "extended_A": ""
 }
 ```
 
-Then pass:
+`description` and `A` are intentionally the same. AtlasKV encodes:
 
-```bash
---teacher-history-json /path/to/history.json
+```text
+key embedding source:   key_string
+value embedding source: description
 ```
 
-For step `k`, only summaries before `k` are included in the prompt history.
+## 3. Q Format
+
+`Q` is the prompt that should match the runtime `qkv_action_v1` prompt shape.
+It contains the goal, history, filtered visible UI elements, compact action
+shapes, and the required answer format.
+
+The UI filter removes Android system status-bar lines and generic container-only
+lines while preserving the original AndroidWorld UI element indexes. This same
+filter is used by offline Q generation, DeepSeek key distillation, and runtime
+request rewriting.
+
+It looks like:
+
+```text
+What is the next AndroidWorld action?
+
+The current AndroidWorld user goal is: ...
+History: ...
+The visible UI elements are:
+UI element 0: ...
+UI element 1: ...
+
+Allowed action JSON shapes:
+Action: {"action_type":"status","goal_status":"complete"}
+Action: {"action_type":"status","goal_status":"infeasible"}
+Action: {"action_type":"answer","text":"..."}
+Action: {"action_type":"click","index":0}
+Action: {"action_type":"long_press","index":0}
+Action: {"action_type":"input_text","text":"...","index":0}
+Action: {"action_type":"keyboard_enter"}
+Action: {"action_type":"navigate_home"}
+Action: {"action_type":"navigate_back"}
+Action: {"action_type":"scroll","direction":"up|down|left|right"}
+Action: {"action_type":"scroll","direction":"up|down|left|right","index":0}
+Action: {"action_type":"open_app","app_name":"..."}
+Action: {"action_type":"wait"}
+
+Please answer in exactly this format:
+Reason: <one brief reason grounded in the goal, history, or visible UI elements>
+Action: {"action_type": "..."}
+Use concrete JSON values. Do not output UI element metadata or a second action.
+```
+
+Do not add `Current state summary` to Q. The current-screen summary is only for
+the key.
+
+## 4. Default Key Before Distillation
+
+Before DeepSeek distillation, `build_qkv.py` writes a fallback `key_string`:
+
+```text
+For the AndroidWorld goal of {goal}, after {history}, the current screen shows the visible UI elements, and the next action should be
+```
+
+This fallback is only a placeholder good enough for inspection. For AtlasKV
+training/inference, use the DeepSeek-distilled key file below.
+
+## 5. Sample 6000 Rows Before Distillation
+
+The full local QKV set is large and expensive to distill. Sample 6000 rows first:
+
+```bash
+python3 offline_android_world_prompt/sample_qkv.py \
+  --input-json data/out/qkv.json \
+  --output-json data/out/qkv_6000.json \
+  --summary-json data/out/qkv_6000_stats.json \
+  --sample-size 6000 \
+  --seed 1607
+```
+
+Expected outputs:
+
+```text
+data/out/qkv_6000.json
+data/out/qkv_6000_stats.json
+```
+
+The sampler is action-type aware. It keeps rare action buckets better than pure
+random sampling and rotates within each bucket by episode.
+
+## 6. Check The DeepSeek Prompt
+
+Before spending API credits, print one prompt without calling the API:
+
+```bash
+python3 offline_android_world_prompt/distill_key_with_deepseek.py \
+  --input-json data/out/qkv_6000.json \
+  --dry-run \
+  --limit 1 \
+  --max-ui-chars 3000
+```
+
+The user message sent to DeepSeek has this shape:
+
+```text
+Row name: aw_...
+Goal: ...
+History: ...
+Visible UI elements excerpt:
+UI element 0: ...
+UI element 1: ...
+Target Action:
+Action: {"action_type":"..."}
+
+Write the AtlasKV key_string and reason.
+```
+
+No precomputed current-state summary is sent. DeepSeek must infer the compact
+screen description from the UI element excerpt. The target action is sent only
+so DeepSeek can write the value-side reason; `key_string` must still not leak
+the answer.
+
+Before truncating the UI excerpt, the script uses the same UI filter as `Q` so
+the model sees the app UI first. Pass `--include-system-ui` only if the system
+UI itself is task-relevant.
+
+## 7. Distill Key Strings And Reasons With DeepSeek
+
+Set the API key:
+
+```bash
+export DEEPSEEK_API_KEY="..."
+```
+
+Run a small 20-row smoke test first:
+
+```bash
+python3 offline_android_world_prompt/distill_key_with_deepseek.py \
+  --input-json data/out/qkv_6000.json \
+  --output-json data/out/qkv_6000_deepseek_key_20.json \
+  --failed-json data/out/qkv_6000_deepseek_key_failed_20.json \
+  --limit 20 \
+  --max-ui-chars 8000
+```
+
+Then run the full 6000-row distillation:
+
+```bash
+python3 offline_android_world_prompt/distill_key_with_deepseek.py \
+  --input-json data/out/qkv_6000.json \
+  --output-json data/out/qkv_6000_deepseek_key.json \
+  --failed-json data/out/qkv_6000_deepseek_key_failed.json \
+  --checkpoint-every 20 \
+  --max-ui-chars 8000
+```
+
+Expected outputs:
+
+```text
+data/out/qkv_6000_deepseek_key.json
+data/out/qkv_6000_deepseek_key_failed.json
+```
+
+The required DeepSeek output is JSON only:
+
+```json
+{
+  "key_string": "For the AndroidWorld goal of {goal}, after {history}, the current screen shows {current state}, and the next action should be",
+  "reason": "One brief sentence explaining why the supplied Target Action is correct."
+}
+```
+
+The script validates that `key_string`:
+
+- starts with `For the AndroidWorld goal of `,
+- contains `, after `,
+- contains `, the current screen shows `,
+- ends with `, and the next action should be`,
+- is one line,
+- does not contain `Reason:`,
+- does not contain `Action:`,
+- does not contain an action JSON object, and
+- does not use pipe separators.
+
+The script also validates that `reason` is one brief line and does not contain
+`Reason:`, `Action:`, or a JSON object. On success it writes:
+
+```text
+reason      = DeepSeek's distilled reason
+description = Reason: <distilled reason>
+              Action: <original normalized target action>
+A           = same as description
+```
+
+If the answer is invalid, the script retries up to 3 times. Rows that still fail
+are skipped and recorded in `--failed-json`.
+
+## 8. Generate Key/Value Embeddings
+
+Use the distilled QKV file as the dataset path. For all-MiniLM:
+
+```bash
+python3 dataset_generation/generate_kb_embeddings_gmm.py \
+  --dataset_name atlas_aw_qkv_6000 \
+  --dataset_path data/out/qkv_6000_deepseek_key.json \
+  --output_path data/out \
+  --model_name all-MiniLM-L6-v2 \
+  --generating_embeddings
+```
+
+Expected outputs:
+
+```text
+data/out/atlas_aw_qkv_6000_all-MiniLM-L6-v2_embd_key.npy
+data/out/atlas_aw_qkv_6000_all-MiniLM-L6-v2_embd_value.npy
+```
+
+If you use an OpenAI-compatible embedding endpoint instead, pass the endpoint
+arguments and pick the model name:
+
+```bash
+python3 dataset_generation/generate_kb_embeddings_gmm.py \
+  --dataset_name atlas_aw_qkv_6000 \
+  --dataset_path data/out/qkv_6000_deepseek_key.json \
+  --output_path data/out \
+  --model_name text-embedding-3-large \
+  --endpoint_url "$OPENAI_BASE_URL" \
+  --endpoint_api_key "$OPENAI_API_KEY" \
+  --generating_embeddings
+```
+
+## 9. Optional Action Profile
+
+Use this if a new TFRecord split has action types or fields you have not seen:
+
+```bash
+python3 offline_android_world_prompt/process_tfrecord.py \
+  --input-glob "data/in/android_control_android_control-*" \
+  --output-dir data/out \
+  --output-format profile \
+  --action-profile-json data/out/action_profile.json
+```
+
+Or profile an existing QKV/prompt JSON with:
+
+```bash
+python3 offline_android_world_prompt/action_profile.py \
+  --prompts-json data/out/prompts.json \
+  --profile-json data/out/action_profile.json
+```
+
+## 10. Useful Flags
+
+For quick debugging:
+
+```bash
+python3 offline_android_world_prompt/process_tfrecord.py \
+  --input-glob "data/in/android_control_android_control-00016-of-00020" \
+  --output-dir data/out_debug \
+  --output-format qkv \
+  --qkv-output-json data/out_debug/qkv_debug.json \
+  --qkv-stats-json data/out_debug/qkv_debug_stats.json \
+  --max-records 5
+```
+
+For step-level goals instead of episode-level goals:
+
+```bash
+--goal-mode step_instruction
+```
+
+To skip invalid converted actions instead of turning them into infeasible rows:
+
+```bash
+--invalid-action-policy skip
+```
+
+To disable synthetic rows:
+
+```bash
+--no-keyboard-enter-after-input-text
+--no-terminal-complete
+```
+
+## 11. Sanity Checks
+
+After each stage, check:
+
+```bash
+python3 - <<'PY'
+import json
+rows = json.load(open('data/out/qkv_6000_deepseek_key.json', encoding='utf-8'))
+print(len(rows))
+print(rows[0]['name'])
+print(rows[0]['key_string'])
+print('Current state summary:' in rows[0]['Q'])
+print('com.android.systemui' in rows[0]['Q'])
+print(rows[0]['description'])
+PY
+```
+
+The expected booleans for `Current state summary:` and `com.android.systemui`
+are:
+
+```text
+False
+False
+```
+
+The final QKV file used for embeddings should be:
+
+```text
+data/out/qkv_6000_deepseek_key.json
+```

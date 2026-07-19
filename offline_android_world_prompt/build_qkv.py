@@ -29,6 +29,7 @@ from atlaskv.android_world.protocol import (  # pylint: disable=wrong-import-pos
 )
 from atlaskv.android_world.prompt_strategy import (  # pylint: disable=wrong-import-position
     QKV_ALLOWED_ACTIONS,
+    filter_android_world_ui_elements,
 )
 
 
@@ -284,7 +285,11 @@ def _append_history(row: dict[str, Any], action: dict[str, Any]) -> str:
 def _build_q(row: dict[str, Any]) -> str:
   goal = _clean_text(row.get('goal') or row.get('episode_goal'), 'Unknown goal.')
   history = _history_text(row.get('history'))
-  ui_elements = row.get('ui_elements_description') or 'No UI element details were found.'
+  raw_ui_elements = row.get('ui_elements_description') or ''
+  ui_elements = (
+      filter_android_world_ui_elements(raw_ui_elements)
+      or 'No UI element details were found.'
+  )
   return f"""What is the next AndroidWorld action?
 
 The current AndroidWorld user goal is: {goal}
@@ -335,13 +340,27 @@ def _key_string(row: dict[str, Any], action: dict[str, Any]) -> str:
   current_goal = _goal_phrase(
       row.get('step_instruction') or row.get('goal') or row.get('episode_goal'),
   )
+  return (
+      f'For the AndroidWorld goal of {current_goal}, after '
+      f'{_history_phrase(row)}, the current screen shows '
+      'the visible UI elements, and the next action should be'
+  )
+
+
+def _history_phrase(row: dict[str, Any]) -> str:
   previous_goal = (
       row.get('previous_step_instruction') or _last_instruction_from_history(row.get('history'))
   )
-  return (
-      'The next AndroidWorld action for '
-      f'{current_goal} by {_completed_goal_phrase(previous_goal)}'
-  )
+  if previous_goal:
+    return _completed_goal_phrase(previous_goal)
+  history = _history_text(row.get('history')).strip().rstrip(' .')
+  if history == 'You just started, no action has been performed yet':
+    return 'no previous actions'
+  history = re.sub(r'Action selected:\s*\{.*?\}\.?', '', history)
+  history = re.sub(r'\bStep\s+\d+:\s*', '', history)
+  history = re.sub(r'\bInstruction:\s*', '', history)
+  history = re.sub(r'\s+', ' ', history).strip(' .')
+  return history or 'previous recorded actions'
 
 
 def _reason_for_action(
