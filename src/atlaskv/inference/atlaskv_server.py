@@ -5,9 +5,9 @@ The adapter intentionally keeps the external API small:
     POST /v1/chat/completions
 
 It converts OpenAI chat messages into a plain text prompt, runs the AtlasKV
-generation path, and returns an OpenAI-style response body. AndroidWorld T3A
-requests are classified and handled by the dedicated ``atlaskv.android_world``
-package so action selection and summarization keep their distinct contracts.
+generation path, and returns an OpenAI-style response body. Inference owns the
+runtime request rewrite, while ``atlaskv.android_world`` owns the shared
+AndroidWorld protocol and Q/UI formatting helpers.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ from atlaskv.android_world import (
     openai_error_response,
     process_t3a_output,
 )
-from atlaskv.android_world.prompt_strategy import (
+from atlaskv.inference.prompt_strategy import (
     DEFAULT_ACTION_MAX_TOKENS,
     PromptStrategy,
     rewrite_chat_completion_payload,

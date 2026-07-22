@@ -27,9 +27,8 @@ from atlaskv.android_world.protocol import (  # pylint: disable=wrong-import-pos
     normalize_and_validate_action_output,
     validate_action,
 )
-from atlaskv.android_world.prompt_strategy import (  # pylint: disable=wrong-import-position
-    QKV_ALLOWED_ACTIONS,
-    filter_android_world_ui_elements,
+from atlaskv.android_world.q_format import (  # pylint: disable=wrong-import-position
+    format_qkv_question,
 )
 
 
@@ -286,23 +285,11 @@ def _build_q(row: dict[str, Any]) -> str:
   goal = _clean_text(row.get('goal') or row.get('episode_goal'), 'Unknown goal.')
   history = _history_text(row.get('history'))
   raw_ui_elements = row.get('ui_elements_description') or ''
-  ui_elements = (
-      filter_android_world_ui_elements(raw_ui_elements)
-      or 'No UI element details were found.'
+  return format_qkv_question(
+      goal=goal,
+      history=history,
+      ui_elements=raw_ui_elements,
   )
-  return f"""What is the next AndroidWorld action?
-
-The current AndroidWorld user goal is: {goal}
-History: {history}
-The visible UI elements are:
-{ui_elements}
-
-{QKV_ALLOWED_ACTIONS}
-
-Please answer in exactly this format:
-Reason: <one brief reason grounded in the goal, history, or visible UI elements>
-Action: {{"action_type": "..."}}
-Use concrete JSON values. Do not output UI element metadata or a second action."""
 
 
 def _action_phrase(action: dict[str, Any]) -> str:

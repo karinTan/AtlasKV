@@ -20,8 +20,8 @@ SRC_ROOT = REPO_ROOT / 'src'
 if str(SRC_ROOT) not in sys.path:
   sys.path.insert(0, str(SRC_ROOT))
 
-from atlaskv.android_world.prompt_strategy import (  # pylint: disable=wrong-import-position
-    filter_android_world_ui_elements,
+from atlaskv.android_world.ui_elements import (  # pylint: disable=wrong-import-position
+    compact_android_world_ui_elements,
 )
 from atlaskv.android_world.protocol import (  # pylint: disable=wrong-import-position
     normalize_and_validate_action_output,
@@ -66,9 +66,9 @@ ONE_SHOT_USER = """Row name: aw_0_0_open_app
 Goal: Open the Zoho Meet app, view the scheduled meetings.
 History: You just started, no action has been performed yet.
 Visible UI elements excerpt:
-UI element 12: content_description='Create new event or other calendar entries', is_clickable=True, package_name='com.google.android.calendar'
-UI element 13: content_description='Show Calendar List and Settings drawer', is_clickable=True, package_name='com.google.android.calendar'
-UI element 53: text='July', package_name='com.google.android.calendar'
+UI element 12: UIElement(content_description='Create new event or other calendar entries', is_clickable)
+UI element 13: UIElement(content_description='Show Calendar List and Settings drawer', is_clickable)
+UI element 53: UIElement(text='July')
 Target Action:
 Action: {"action_type":"open_app","app_name":"Zoho Meet"}
 
@@ -135,11 +135,9 @@ def _prepare_ui_excerpt(
     max_chars: int,
     include_system_ui: bool = False,
 ) -> str:
+  del include_system_ui
   raw_lines = [line for line in ui_elements.splitlines() if line.strip()]
-  filtered = filter_android_world_ui_elements(
-      ui_elements,
-      include_system_ui=include_system_ui,
-  )
+  filtered = compact_android_world_ui_elements(ui_elements)
   filtered_lines = filtered.splitlines()
   if filtered_lines:
     excerpt = '\n'.join(filtered_lines)
@@ -150,7 +148,7 @@ def _prepare_ui_excerpt(
 
   prefix = ''
   if dropped:
-    prefix = f'[Filtered out {dropped} Android system or generic UI lines.]\n'
+    prefix = f'[Filtered out {dropped} generic UI lines.]\n'
   return _shorten(prefix + excerpt, max_chars)
 
 
