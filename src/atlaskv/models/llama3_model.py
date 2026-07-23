@@ -66,6 +66,33 @@ logger = logging.get_logger(__name__)
 
 PADDING_VALUE = torch.finfo(torch.bfloat16).min
 
+
+def _custom_attention_causal_mask(
+    query_states: torch.Tensor,
+    key_states: torch.Tensor,
+    cache_position: Optional[torch.LongTensor],
+    padding_mask: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    """Build the causal mask required when Transformers elides it for SDPA/FA2."""
+    bsz, _, q_len, _ = query_states.shape
+    kv_len = key_states.shape[-2]
+    if cache_position is None:
+        cache_position = torch.arange(
+            kv_len - q_len, kv_len, device=query_states.device
+        )
+    key_positions = torch.arange(kv_len, device=query_states.device)
+    mask = key_positions.unsqueeze(0) > cache_position.reshape(-1, 1)
+    causal_mask = torch.zeros(
+        (bsz, 1, q_len, kv_len), dtype=query_states.dtype, device=query_states.device
+    ).masked_fill(mask.unsqueeze(0).unsqueeze(0), torch.finfo(query_states.dtype).min)
+    if padding_mask is not None:
+        mask_length = min(padding_mask.shape[-1], kv_len)
+        padding = padding_mask[:, None, None, :mask_length] == 0
+        causal_mask[:, :, :, :mask_length] = causal_mask[:, :, :, :mask_length].masked_fill(
+            padding, torch.finfo(query_states.dtype).min
+        )
+    return causal_mask
+
 def get_llama_attention_classes(use_kg: bool = False):
     return {
         "eager": AtlaskvLlamaAttention if use_kg else KblamLlamaAttention,
@@ -890,6 +917,10 @@ class KblamLlamaAttention(nn.Module):
 
         key_states = repeat_kv(key_states, self.num_key_value_groups)  # [bs, num_heads, max_len, head_dim]
         value_states = repeat_kv(value_states, self.num_key_value_groups)  # [bs, num_heads, max_len, head_dim]
+        if attention_mask is None or attention_mask.dim() != 4:
+            attention_mask = _custom_attention_causal_mask(
+                query_states, key_states, cache_position, attention_mask
+            )
         kb_layer_frequency = kb_config.kb_layer_frequency
         dynamic_sparsify = kb_config.dynamic_sparsify
         topk_size = kb_config.top_k_kb

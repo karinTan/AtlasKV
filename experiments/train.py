@@ -102,6 +102,7 @@ class TrainingConfig:
     use_kg: bool = False
     use_hierarchial_kv: bool = False
     use_extended_qa: bool = False
+    android_world_action_task: bool = False
     duplicate_true_kb: bool = True
     length_invariance: bool = False
     projector_type: str = "linear"
@@ -494,6 +495,7 @@ class TrainingStepManager:
                 tokenizer_output["attention_mask"],
             )
             labels = label_func(input_ids, input_strs, tokenizer)
+            labels = labels.masked_fill(attention_masks == 0, -100)
         
         if include_outlier:
             batch_indices = np.random.choice(len(dataset), B, replace=False)
@@ -570,6 +572,73 @@ class ModelTrainer:
         for b in range(len(input_strs)):
             answer_mask[b, : (answer_indices[b].item() + 1)] = 0
         return input_ids * answer_mask + (1 - answer_mask) * (-100)
+
+    def _truncate_batch_preserving_answer(
+        self,
+        input_ids: torch.Tensor,
+        attention_masks: torch.Tensor,
+        labels: torch.Tensor,
+        max_seq_len: int,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Truncate long rows while keeping all supervised assistant tokens."""
+        if input_ids.shape[1] <= max_seq_len:
+            return input_ids, attention_masks, labels
+
+        pad_token_id = self.tokenizer.pad_token_id
+        if pad_token_id is None:
+            pad_token_id = self.tokenizer.eos_token_id
+
+        new_input_ids = torch.full(
+            (input_ids.shape[0], max_seq_len),
+            pad_token_id,
+            dtype=input_ids.dtype,
+            device=input_ids.device,
+        )
+        new_attention_masks = torch.zeros(
+            (attention_masks.shape[0], max_seq_len),
+            dtype=attention_masks.dtype,
+            device=attention_masks.device,
+        )
+        new_labels = torch.full(
+            (labels.shape[0], max_seq_len),
+            -100,
+            dtype=labels.dtype,
+            device=labels.device,
+        )
+
+        for batch_idx in range(input_ids.shape[0]):
+            seq_len = int(attention_masks[batch_idx].sum().item())
+            seq_input_ids = input_ids[batch_idx, :seq_len]
+            seq_labels = labels[batch_idx, :seq_len]
+
+            if seq_len <= max_seq_len:
+                kept_input_ids = seq_input_ids
+                kept_labels = seq_labels
+            else:
+                label_positions = torch.nonzero(seq_labels != -100, as_tuple=False).flatten()
+                if len(label_positions) > 0:
+                    answer_start = int(label_positions[0].item())
+                    answer_len = seq_len - answer_start
+                    if answer_len >= max_seq_len:
+                        start = seq_len - max_seq_len
+                    else:
+                        prompt_budget = max_seq_len - answer_len
+                        start = max(0, answer_start - prompt_budget)
+                else:
+                    start = seq_len - max_seq_len
+                kept_input_ids = seq_input_ids[start:]
+                kept_labels = seq_labels[start:]
+
+                if len(kept_input_ids) > max_seq_len:
+                    kept_input_ids = kept_input_ids[-max_seq_len:]
+                    kept_labels = kept_labels[-max_seq_len:]
+
+            kept_len = len(kept_input_ids)
+            new_input_ids[batch_idx, :kept_len] = kept_input_ids
+            new_attention_masks[batch_idx, :kept_len] = 1
+            new_labels[batch_idx, :kept_len] = kept_labels
+
+        return new_input_ids, new_attention_masks, new_labels
 
     def _get_phi3_params(self, model, sep_query_head: bool, kb_token_layer_frequency: int) -> List[torch.nn.Parameter]:
         """Get trainable parameters for Phi3 model."""
@@ -692,9 +761,12 @@ class ModelTrainer:
                         self.logger.info(f"INPUT IDs SHAPE: {input_ids.shape}")
 
                     if self.config.max_seq_len is not None:
-                        input_ids = input_ids[:, : self.config.max_seq_len]
-                        attention_masks = attention_masks[:, : self.config.max_seq_len]
-                        labels = labels[:, : self.config.max_seq_len]
+                        input_ids, attention_masks, labels = self._truncate_batch_preserving_answer(
+                            input_ids,
+                            attention_masks,
+                            labels,
+                            self.config.max_seq_len,
+                        )
 
                     if self.config.use_hierarchial_kv:
                         kb_embedding = self.retriever.get_hierarchical_embeddings(
@@ -728,7 +800,13 @@ class ModelTrainer:
 
                     shift_logits = logits[..., :-1, :].contiguous()
                     shift_labels = labels[..., 1:].contiguous()
-                    weights = (shift_labels > 0).sum(-1, keepdim=True).expand(-1, shift_labels.shape[1]).contiguous()
+                    weights = (
+                        (shift_labels > 0)
+                        .sum(-1, keepdim=True)
+                        .clamp_min(1)
+                        .expand(-1, shift_labels.shape[1])
+                        .contiguous()
+                    )
 
                     model_config = (
                         self.model.config
@@ -900,6 +978,7 @@ def create_config_from_args(args: argparse.Namespace) -> TrainingConfig:
         use_kg=args.use_kg,
         use_hierarchial_kv=args.use_hierarchial_kv,
         use_extended_qa=args.use_extended_qa,
+        android_world_action_task=args.android_world_action_task,
         duplicate_true_kb=args.duplicate_true_kb,
         length_invariance=args.length_invariance,
         projector_type=args.projector_type,
@@ -945,6 +1024,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--use_certainty_loss", action="store_true")
     parser.add_argument("--use_kg", action="store_true")
     parser.add_argument("--use_hierarchial_kv", action="store_true")
+    parser.add_argument(
+        "--android_world_action_task",
+        action="store_true",
+        help="Enable guards for AndroidWorld Q -> Reason/Action training data.",
+    )
     parser.add_argument("--projector_type", type=str, default="linear", choices=["linear", "mlp"])
     return parser
 
@@ -964,6 +1048,25 @@ def main():
 
     config = create_config_from_args(args)
     print(vars(args))
+
+    if args.android_world_action_task:
+        incompatible_flags = []
+        if args.use_data_aug:
+            incompatible_flags.append("--use_data_aug")
+        if args.multi_entities is not None:
+            incompatible_flags.append("--multi_entities")
+        if args.use_extended_qa:
+            incompatible_flags.append("--use_extended_qa")
+        if incompatible_flags:
+            raise ValueError(
+                "AndroidWorld action training expects dataset Q/A rows directly; "
+                f"do not use {', '.join(incompatible_flags)}."
+            )
+        if args.outlier_num != -1:
+            logger.warning(
+                "AndroidWorld action training should normally use --outlier_num -1; "
+                "the default outlier answer is not a valid Reason/Action response."
+            )
 
     set_llama_attention_classes(args.use_kg)
 

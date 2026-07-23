@@ -285,10 +285,17 @@ def _build_q(row: dict[str, Any]) -> str:
   goal = _clean_text(row.get('goal') or row.get('episode_goal'), 'Unknown goal.')
   history = _history_text(row.get('history'))
   raw_ui_elements = row.get('ui_elements_description') or ''
+  target_action = row.get('target_action') or {}
+  keep_indices = (
+      [target_action['index']]
+      if isinstance(target_action, dict) and isinstance(target_action.get('index'), int)
+      else None
+  )
   return format_qkv_question(
       goal=goal,
       history=history,
       ui_elements=raw_ui_elements,
+      keep_ui_indices=keep_indices,
   )
 
 
